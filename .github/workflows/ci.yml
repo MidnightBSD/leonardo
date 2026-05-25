@@ -16,8 +16,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest ]
-        # MidnightBSD and FreeBSD CI runs are handled by Cirrus
-        # (see .cirrus.yml) since GitHub Actions doesn't provide BSD runners.
 
     steps:
       - uses: actions/checkout@v4
@@ -45,5 +43,69 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-reports-${{ matrix.os }}
+          path: '**/build/reports/tests/**'
+          retention-days: 7
+
+  freebsd:
+    name: build (FreeBSD 14.2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: .gradle
+          key: freebsd-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: freebsd-gradle-
+
+      - name: Build & test
+        uses: cross-platform-actions/action@v1.1.0
+        with:
+          operating_system: freebsd
+          version: '14.2'
+          run: |
+            sudo pkg install -y openjdk21 bash
+            export JAVA_HOME=/usr/local/openjdk21
+            export PATH=$JAVA_HOME/bin:$PATH
+            ./gradlew --no-daemon -g .gradle build
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-freebsd
+          path: '**/build/reports/tests/**'
+          retention-days: 7
+
+  midnightbsd:
+    name: build (MidnightBSD 4.0.4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: .gradle
+          key: midnightbsd-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: midnightbsd-gradle-
+
+      - name: Build & test
+        uses: cross-platform-actions/action@v1.1.0
+        with:
+          operating_system: midnightbsd
+          version: '4.0.4'
+          run: |
+            sudo mport install openjdk21
+            export JAVA_HOME=/usr/local/openjdk21
+            export PATH=$JAVA_HOME/bin:$PATH
+            ./gradlew --no-daemon -g .gradle build
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-midnightbsd
           path: '**/build/reports/tests/**'
           retention-days: 7
