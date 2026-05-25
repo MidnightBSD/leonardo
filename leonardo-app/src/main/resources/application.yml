@@ -8,9 +8,16 @@ micronaut:
   application:
     name: leonardo
   server:
-    port: 9000
-    host: 0.0.0.0
     netty:
+      # Two listeners: S3 API on 9000, admin-only on 9001.
+      # When 'listeners' is non-empty Micronaut ignores micronaut.server.port.
+      listeners:
+        main:
+          host: 0.0.0.0
+          port: 9000
+        admin:
+          host: 0.0.0.0
+          port: ${leonardo.server.admin_port:9001}
       # We stream large object payloads; let Netty handle them in chunks
       # rather than buffering into memory.
       maxChunkSize: 8192
