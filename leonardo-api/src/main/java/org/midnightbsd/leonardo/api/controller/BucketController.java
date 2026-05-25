@@ -12,6 +12,7 @@
 package org.midnightbsd.leonardo.api.controller;
 
 import io.micronaut.http.HttpResponse;
+import io.micronaut.http.HttpStatus;
 import io.micronaut.http.MediaType;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Delete;
@@ -35,19 +36,19 @@ public final class BucketController {
     @Head
     public HttpResponse<?> headBucket(@PathVariable final String bucket) {
         // TODO(M2): check that bucket exists, return 404 NoSuchBucket if not.
-        return HttpResponse.status(501);   // NotImplemented
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED);   // NotImplemented
     }
 
     @Put
     public HttpResponse<?> createBucket(@PathVariable final String bucket) {
         // TODO(M2): validate bucket name, create directory layout, write bucket.yaml.
-        return HttpResponse.status(501);
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED);
     }
 
     @Delete
     public HttpResponse<?> deleteBucket(@PathVariable final String bucket) {
         // TODO(M2): check empty, refuse otherwise (S3's BucketNotEmpty).
-        return HttpResponse.status(501);
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED);
     }
 
     /**
@@ -73,6 +74,6 @@ public final class BucketController {
             return HttpResponse.ok(body);
         }
         // ListObjectsV2 (and legacy ListObjects) stub.
-        return HttpResponse.status(501);
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED);
     }
 }

@@ -12,6 +12,7 @@
 package org.midnightbsd.leonardo.api.controller;
 
 import io.micronaut.http.HttpResponse;
+import io.micronaut.http.HttpStatus;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Delete;
 import io.micronaut.http.annotation.Get;
@@ -43,7 +44,7 @@ public final class ObjectController {
     public HttpResponse<?> headObject(
             @PathVariable final String bucket,
             @PathVariable final String key) {
-        return HttpResponse.status(501);
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED);
     }
 
     @Get
@@ -51,7 +52,7 @@ public final class ObjectController {
             @PathVariable final String bucket,
             @PathVariable final String key) {
         // TODO(M2): stream the payload via Netty FileRegion / sendfile.
-        return HttpResponse.status(501);
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED);
     }
 
     @Put
@@ -61,13 +62,13 @@ public final class ObjectController {
             @Header(value = CALLER_OBJECT_ID_HEADER, defaultValue = "") final String callerObjectId) {
         // TODO(M2): validate callerObjectId per the §6 regex, check bucket's
         // caller_object_ids policy, write payload + metadata atomically.
-        return HttpResponse.status(501);
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED);
     }
 
     @Delete
     public HttpResponse<?> deleteObject(
             @PathVariable final String bucket,
             @PathVariable final String key) {
-        return HttpResponse.status(501);
+        return HttpResponse.status(HttpStatus.NOT_IMPLEMENTED);
     }
 }

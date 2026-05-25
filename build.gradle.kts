@@ -33,10 +33,6 @@ subprojects {
     apply(plugin = "java")
     apply(plugin = "java-library")
 
-    repositories {
-        mavenCentral()
-    }
-
     extensions.configure<JavaPluginExtension> {
         toolchain {
             languageVersion.set(JavaLanguageVersion.of(21))
@@ -47,7 +43,7 @@ subprojects {
     tasks.withType<JavaCompile>().configureEach {
         options.encoding = "UTF-8"
         options.release.set(21)
-        options.compilerArgs.addAll(listOf("-Xlint:all", "-Werror", "-parameters"))
+        options.compilerArgs.addAll(listOf("-Xlint:all", "-Xlint:-processing", "-Werror", "-parameters"))
     }
 
     tasks.withType<Test>().configureEach {
