@@ -478,7 +478,7 @@ Until M11, any `region_map` entry whose region differs from `server.region` is l
 
 | Milestone | Deliverable | Target |
 | --- | --- | --- |
-| **M0** | Repo, build, CI (GitHub Actions + cirrus for MidnightBSD), skeleton Micronaut app, health endpoint | Week 1–2 |
+| **M0** | Repo, build, CI (GitHub Actions + cross-platform-actions for FreeBSD/MidnightBSD), skeleton Micronaut app, health endpoint | Week 1–2 |
 | **M1** | Auth (SigV2 + SigV4), API key loader, request-signing test harness against AWS SDK v2 | Week 3–4 |
 | **M2** | Phase 1 endpoints (bucket + object CRUD), atomic YAML metadata, caller-chosen object IDs, fsync-rename storage layer | Week 5–8 |
 | **M3** | Phase 2 (multipart) + integrity (CRC32C, SHA-256 trailers) | Week 9–10 |
