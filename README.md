@@ -4,6 +4,8 @@ S3-compatible object storage server. JVM-only (Java 21), Micronaut 4, Netty. Sin
 
 Apache License 2.0. See `LICENSE` and `NOTICE`.
 
+NOTE: Part of this code is AI generated
+
 ## Status
 
 Pre-alpha. Milestone M0 (project scaffolding) in progress. See `docs/project-plan.md` for the full roadmap.
