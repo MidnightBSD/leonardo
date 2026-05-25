@@ -1,0 +1,21 @@
+/*
+ * Copyright 2026 The Leonardo Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * Authentication and credential management. Supports both AWS Signature
+ * Version 4 (default) and Signature Version 2 (for legacy clients; see project
+ * plan §1 Decisions and §13 Risks).
+ *
+ * <p>Subpackages: {@code keys} for credential storage,
+ * {@code sigv4} and {@code sigv2} for signature verification.
+ */
+package org.midnightbsd.leonardo.auth;

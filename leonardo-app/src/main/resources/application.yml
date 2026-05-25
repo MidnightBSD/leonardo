@@ -1,0 +1,67 @@
+# Copyright 2026 The Leonardo Authors.
+# Licensed under the Apache License, Version 2.0.
+#
+# Default Micronaut application configuration. Operator-supplied overrides
+# go in /etc/leonardo/leonardo.yaml — see docs/project-plan.md §4.
+
+micronaut:
+  application:
+    name: leonardo
+  server:
+    port: 9000
+    host: 0.0.0.0
+    netty:
+      # We stream large object payloads; let Netty handle them in chunks
+      # rather than buffering into memory.
+      maxChunkSize: 8192
+      # 5 TiB matches the S3 single-PUT ceiling; smaller uploads use this
+      # path, multipart handles anything larger.
+      maxRequestSize: 5497558138880
+      # Long enough for very slow PUTs of large objects over slow networks.
+      readTimeout: 15m
+      idleTime: 15m
+  metrics:
+    enabled: true
+    export:
+      prometheus:
+        enabled: true
+        step: PT1M
+
+# Endpoints exposed by the admin server (leonardo-admin).
+endpoints:
+  health:
+    enabled: true
+    sensitive: false
+  metrics:
+    enabled: true
+    sensitive: false
+
+# Leonardo-specific configuration. Mirrors the schema in §4 of the project plan.
+leonardo:
+  server:
+    region: us-east-1
+    domain: s3.local
+    admin_port: 9001
+  storage:
+    base_dir: /var/leonardo
+    tmp_dir: /var/leonardo/tmp
+    fsync_on_write: true
+    max_object_size: 5497558138880
+  limits:
+    max_multipart_parts: 10000
+    min_part_size: 5242880
+    max_part_size: 5368709120
+    request_timeout_seconds: 900
+  auth:
+    source: yaml
+    api_keys_file: /var/leonardo/config/api-keys.yaml
+    allow_anonymous_read: false
+    allow_sigv2: true
+    presigned_url_max_ttl_seconds: 259200   # 3 days
+  logging:
+    access_log: /var/leonardo/logs/access.log
+    audit_log: /var/leonardo/logs/audit.log
+  features:
+    versioning_enabled: true
+    multipart_enabled: true
+    presigned_urls_enabled: true

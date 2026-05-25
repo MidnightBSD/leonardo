@@ -1,0 +1,16 @@
+# Copyright 2026 The Leonardo Authors.
+# Licensed under the Apache License, Version 2.0.
+#
+# Loaded when MICRONAUT_ENVIRONMENTS=dev (set by `./gradlew :leonardo-app:run`).
+
+leonardo:
+  storage:
+    base_dir: /tmp/leonardo-dev
+    tmp_dir: /tmp/leonardo-dev/tmp
+    fsync_on_write: false   # speed over durability when iterating locally
+  auth:
+    api_keys_file: /tmp/leonardo-dev/config/api-keys.yaml
+    allow_anonymous_read: true  # convenient for curl smoke tests
+  logging:
+    access_log: /tmp/leonardo-dev/logs/access.log
+    audit_log: /tmp/leonardo-dev/logs/audit.log

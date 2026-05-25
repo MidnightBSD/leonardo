@@ -1,0 +1,14 @@
+Leonardo
+Copyright 2026 The Leonardo Authors
+
+This product includes software developed at the MidnightBSD Project
+(https://www.midnightbsd.org/).
+
+This product includes software developed by:
+
+  - Micronaut Framework (https://micronaut.io/) — Apache License 2.0
+  - Netty (https://netty.io/) — Apache License 2.0
+  - Jackson (https://github.com/FasterXML/jackson) — Apache License 2.0
+  - SnakeYAML (https://bitbucket.org/snakeyaml/snakeyaml) — Apache License 2.0
+  - SLF4J (https://www.slf4j.org/) — MIT License
+  - Logback (https://logback.qos.ch/) — Eclipse Public License 1.0 / LGPL 2.1
