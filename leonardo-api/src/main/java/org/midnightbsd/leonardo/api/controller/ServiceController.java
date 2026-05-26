@@ -11,40 +11,61 @@
  */
 package org.midnightbsd.leonardo.api.controller;
 
+import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.MediaType;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Get;
 import io.micronaut.http.annotation.Produces;
+import org.midnightbsd.leonardo.core.S3Exception;
+import org.midnightbsd.leonardo.core.bucket.BucketMetadata;
+import org.midnightbsd.leonardo.core.bucket.BucketService;
+import org.midnightbsd.leonardo.xml.S3Xml;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.util.List;
 
 /**
- * S3 service-level endpoint: operations on the root URL with no bucket.
- *
- * <p>Currently implements only the listing path stub. Phase 1 work fills in
- * {@code ListBuckets} for real, wiring it to {@code BucketService}.
+ * S3 service-level endpoint ({@code GET /}): {@code ListBuckets}.
  */
 @Controller("/")
 public final class ServiceController {
 
+    private static final Logger LOG = LoggerFactory.getLogger(ServiceController.class);
+
+    private final BucketService bucketService;
+
+    public ServiceController(final BucketService bucketService) {
+        this.bucketService = bucketService;
+    }
+
     /**
-     * S3 {@code ListBuckets}. Returns all buckets owned by the authenticated caller.
-     *
-     * <p>Skeleton — returns an empty S3 XML response for now so SDK smoke tests
-     * (e.g. {@code aws s3 ls}) don't hard-fail during M0.
+     * S3 {@code ListBuckets}: returns all buckets.
      */
     @Get
     @Produces(MediaType.APPLICATION_XML)
-    public HttpResponse<String> listBuckets() {
-        final String body = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-                    <Owner>
-                        <ID>leonardo</ID>
-                        <DisplayName>leonardo</DisplayName>
-                    </Owner>
-                    <Buckets/>
-                </ListAllMyBucketsResult>
-                """;
-        return HttpResponse.ok(body);
+    public HttpResponse<String> listBuckets(final HttpRequest<?> request) {
+        final String identity = request.getAttribute("s3.identity", String.class)
+                .orElse("anonymous");
+        try {
+            final List<BucketMetadata> buckets = bucketService.listBuckets();
+            final List<S3Xml.BucketEntry> entries = buckets.stream()
+                    .map(b -> new S3Xml.BucketEntry(b.name(), b.createdAt()))
+                    .toList();
+            return HttpResponse.ok(S3Xml.listBuckets(identity, entries))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final IOException ex) {
+            LOG.error("ListBuckets failed", ex);
+            return s3Error(S3Xml.error("InternalError",
+                    "We encountered an internal error. Please try again.", null), 500);
+        }
+    }
+
+    private static HttpResponse<String> s3Error(final String xml, final int status) {
+        return HttpResponse.<String>status(io.micronaut.http.HttpStatus.valueOf(status))
+                .contentType(MediaType.APPLICATION_XML)
+                .body(xml);
     }
 }

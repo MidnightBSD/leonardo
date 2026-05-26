@@ -8,6 +8,12 @@ plugins {
 }
 
 dependencies {
+    annotationProcessor(platform("io.micronaut.platform:micronaut-platform:${rootProject.extra["micronautVersion"]}"))
+    annotationProcessor("io.micronaut:micronaut-inject-java")
+
+    api(platform("io.micronaut.platform:micronaut-platform:${rootProject.extra["micronautVersion"]}"))
+    api("io.micronaut:micronaut-inject")
+    api("jakarta.inject:jakarta.inject-api:2.0.1")
     api(project(":leonardo-yaml"))
     api("com.fasterxml.jackson.core:jackson-databind:${rootProject.extra["jacksonVersion"]}")
 

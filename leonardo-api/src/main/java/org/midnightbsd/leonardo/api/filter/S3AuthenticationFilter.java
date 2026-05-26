@@ -84,6 +84,7 @@ public final class S3AuthenticationFilter implements HttpServerFilter {
         }
 
         LOG.debug("Auth passed: identity={} {} {}", identity.get(), request.getMethodName(), path);
+        request.setAttribute("s3.identity", identity.get());
         return chain.proceed(request);
     }
 

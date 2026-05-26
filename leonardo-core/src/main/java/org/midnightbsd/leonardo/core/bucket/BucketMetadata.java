@@ -11,6 +11,8 @@
  */
 package org.midnightbsd.leonardo.core.bucket;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -47,10 +49,25 @@ public record BucketMetadata(
         String defaultContentType,         // null = no default
         RateLimitConfig rateLimit
 ) {
-    public enum CallerObjectIdsMode { REQUIRED, ALLOWED, FORBIDDEN }
-    public enum FsyncMode { INHERIT, TRUE, FALSE }
-    public enum VersioningStatus { ENABLED, SUSPENDED, DISABLED }
-    public enum RateLimitScope { PER_IDENTITY, PER_BUCKET }
+    public enum CallerObjectIdsMode {
+        @JsonProperty("required") REQUIRED,
+        @JsonProperty("allowed") ALLOWED,
+        @JsonProperty("forbidden") FORBIDDEN
+    }
+    public enum FsyncMode {
+        @JsonProperty("inherit") INHERIT,
+        @JsonProperty("true") TRUE,
+        @JsonProperty("false") FALSE
+    }
+    public enum VersioningStatus {
+        @JsonProperty("Enabled") ENABLED,
+        @JsonProperty("Suspended") SUSPENDED,
+        @JsonProperty("Disabled") DISABLED
+    }
+    public enum RateLimitScope {
+        @JsonProperty("per_identity") PER_IDENTITY,
+        @JsonProperty("per_bucket") PER_BUCKET
+    }
 
     public record VersioningConfig(VersioningStatus status, boolean mfaDelete) {}
     public record AclConfig(String canned, List<AclGrant> grants) {}

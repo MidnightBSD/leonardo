@@ -14,6 +14,7 @@ package org.midnightbsd.leonardo.yaml;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.cfg.EnumFeature;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -34,7 +35,8 @@ public final class YamlMappers {
             .registerModule(new JavaTimeModule())
             .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-            .configure(EnumFeature.READ_ENUM_KEYS_USING_INDEX, false);
+            .configure(EnumFeature.READ_ENUM_KEYS_USING_INDEX, false)
+            .configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
 
     private YamlMappers() {}
 
