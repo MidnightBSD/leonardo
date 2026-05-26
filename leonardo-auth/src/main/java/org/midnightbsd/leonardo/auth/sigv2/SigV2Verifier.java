@@ -31,9 +31,12 @@ package org.midnightbsd.leonardo.auth.sigv2;
 public interface SigV2Verifier {
 
     /**
-     * @return true iff the signature matches.
+     * Verifies the request signature.
+     *
+     * @return the caller's identity string on success, or empty if the access key
+     *         is unknown, disabled, or the signature does not match.
      */
-    boolean verify(SigV2Request request);
+    java.util.Optional<String> verify(SigV2Request request);
 
     record SigV2Request(
             String accessKey,

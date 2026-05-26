@@ -1,0 +1,9 @@
+keys:
+  - access_key: AKIATESTKEY0000000001
+    secret_key: TestSecretKey0000000000000000000000000001
+    identity: test-alice
+    enabled: true
+  - access_key: AKIATESTKEY0000000002
+    secret_key: TestSecretKey0000000000000000000000000002
+    identity: test-bob
+    enabled: false

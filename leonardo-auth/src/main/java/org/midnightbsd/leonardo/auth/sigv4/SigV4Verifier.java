@@ -29,12 +29,16 @@ package org.midnightbsd.leonardo.auth.sigv4;
 public interface SigV4Verifier {
 
     /**
-     * @return true iff the signature matches.
+     * Verifies the request signature.
+     *
+     * @return the caller's identity string on success, or empty if the access key
+     *         is unknown, disabled, or the signature does not match.
      */
-    boolean verify(SigV4Request request);
+    java.util.Optional<String> verify(SigV4Request request);
 
     record SigV4Request(
             String accessKey,
+            String date,          // YYYYMMDD from the Credential scope
             String region,
             String service,
             String signedHeaders,

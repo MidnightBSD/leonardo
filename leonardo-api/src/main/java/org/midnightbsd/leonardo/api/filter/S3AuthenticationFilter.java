@@ -11,57 +11,91 @@
  */
 package org.midnightbsd.leonardo.api.filter;
 
+import io.micronaut.core.async.publisher.Publishers;
 import io.micronaut.http.HttpRequest;
+import io.micronaut.http.HttpResponse;
+import io.micronaut.http.HttpStatus;
+import io.micronaut.http.MediaType;
 import io.micronaut.http.MutableHttpResponse;
 import io.micronaut.http.annotation.Filter;
 import io.micronaut.http.filter.HttpServerFilter;
 import io.micronaut.http.filter.ServerFilterChain;
+import org.midnightbsd.leonardo.auth.RequestAuthenticator;
 import org.reactivestreams.Publisher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
 /**
- * Inspects every inbound S3 request, extracts the {@code Authorization} header,
- * dispatches to the SigV4 or SigV2 verifier, and rejects mismatched signatures.
+ * Authenticates every inbound S3 request using {@link RequestAuthenticator}.
  *
- * <p>Pre-signed URLs are recognized by the presence of {@code X-Amz-Signature}
- * (SigV4) or {@code Signature} (SigV2) in the query string and verified via
- * the same code paths.
+ * <p>Supports Authorization-header SigV4 ({@code AWS4-HMAC-SHA256}) and
+ * SigV2 ({@code AWS}) as implemented in {@code leonardo-auth}. Pre-signed
+ * URLs are deferred to M2.
  *
- * <p>Currently a pass-through skeleton — the real verification lands in M1.
+ * <p>Admin paths ({@code /admin/**}) are skipped — they are handled by
+ * {@code AdminPortFilter} and the admin port does not require S3 auth.
+ *
+ * <p>Runs at order {@code -100}, after {@code AdminPortFilter} ({@code -1000}).
  */
 @Filter("/**")
 public final class S3AuthenticationFilter implements HttpServerFilter {
 
     private static final Logger LOG = LoggerFactory.getLogger(S3AuthenticationFilter.class);
 
+    private static final String ACCESS_DENIED_XML =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            + "<Error><Code>AccessDenied</Code>"
+            + "<Message>Access Denied</Message></Error>";
+
+    private final RequestAuthenticator authenticator;
+
+    public S3AuthenticationFilter(final RequestAuthenticator authenticator) {
+        this.authenticator = authenticator;
+    }
+
     @Override
     public Publisher<MutableHttpResponse<?>> doFilter(
             final HttpRequest<?> request,
             final ServerFilterChain chain) {
 
-        final String auth = request.getHeaders().get("Authorization");
-        if (auth == null || auth.isBlank()) {
-            // M1: distinguish "no auth header" from "anonymous read allowed",
-            // and reject the former with HTTP 403 AccessDenied. For now, pass
-            // through so the skeleton stays runnable.
-            LOG.debug("Request {} {} has no Authorization header; passing through (M0 stub)",
-                    request.getMethod(), request.getPath());
-        } else if (auth.startsWith("AWS4-HMAC-SHA256")) {
-            LOG.debug("SigV4 request — verification stub");
-        } else if (auth.startsWith("AWS ")) {
-            LOG.debug("SigV2 request — verification stub");
-        } else {
-            LOG.debug("Unknown Authorization scheme: {}", auth.split(" ")[0]);
+        final String path = request.getPath();
+
+        // Admin endpoints are port-restricted by AdminPortFilter; no S3 auth needed.
+        if (path.equals("/admin") || path.startsWith("/admin/")) {
+            return chain.proceed(request);
         }
 
+        final Map<String, List<String>> headers = lowercasedHeaders(request);
+        final Optional<String> identity = authenticator.authenticate(
+                request.getMethodName(), request.getUri(), headers);
+
+        if (identity.isEmpty()) {
+            LOG.debug("Auth rejected: {} {}", request.getMethodName(), path);
+            return Publishers.just(
+                    HttpResponse.status(HttpStatus.FORBIDDEN)
+                            .contentType(MediaType.APPLICATION_XML)
+                            .body(ACCESS_DENIED_XML));
+        }
+
+        LOG.debug("Auth passed: identity={} {} {}", identity.get(), request.getMethodName(), path);
         return chain.proceed(request);
     }
 
     @Override
     public int getOrder() {
-        // Run before everything else so unauthenticated requests never touch
-        // a controller. Lower numbers run earlier.
         return -100;
+    }
+
+    private static Map<String, List<String>> lowercasedHeaders(final HttpRequest<?> request) {
+        final Map<String, List<String>> result = new HashMap<>();
+        request.getHeaders().forEachValue((name, value) ->
+                result.computeIfAbsent(name.toLowerCase(), k -> new ArrayList<>()).add(value));
+        return result;
     }
 }

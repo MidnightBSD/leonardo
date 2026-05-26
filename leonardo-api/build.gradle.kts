@@ -18,6 +18,7 @@ dependencies {
     api("io.micronaut:micronaut-runtime")
     api("io.micronaut.validation:micronaut-validation")
     api("jakarta.annotation:jakarta.annotation-api")
+    api(project(":leonardo-auth"))
     api(project(":leonardo-core"))
     api(project(":leonardo-xml"))
 
