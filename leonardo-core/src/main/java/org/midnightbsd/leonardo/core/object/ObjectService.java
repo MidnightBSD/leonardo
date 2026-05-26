@@ -57,10 +57,12 @@ public final class ObjectService {
     /**
      * Stores an object. Returns the ETag (MD5 hex, without quotes).
      *
-     * @param callerObjectId if non-empty, the caller-supplied on-disk ID (§6)
-     * @param contentType    the object's Content-Type
-     * @param userMetadata   x-amz-meta-* headers
-     * @param body           the object payload bytes (may be empty for 0-byte objects)
+     * @param callerObjectId   if non-empty, the caller-supplied on-disk ID (§6)
+     * @param contentType      the object's Content-Type
+     * @param userMetadata     x-amz-meta-* headers
+     * @param checksums        optional integrity checksums already verified by the
+     *                         controller (algorithm → Base64 value); stored in metadata
+     * @param body             the object payload bytes (may be empty for 0-byte objects)
      */
     public String putObject(
             final String bucket,
@@ -68,6 +70,7 @@ public final class ObjectService {
             final String callerObjectId,
             final String contentType,
             final Map<String, String> userMetadata,
+            final Map<String, String> checksums,
             final byte[] body) throws IOException {
 
         ensureBucketExists(bucket);
@@ -90,7 +93,8 @@ public final class ObjectService {
                             ? contentType : "application/octet-stream",
                     "\"" + etag + "\"",
                     now, now, "STANDARD",
-                    null, userMetadata, null, "private", false, null);
+                    null, userMetadata, null, "private", false, null,
+                    checksums != null && !checksums.isEmpty() ? checksums : null, null);
             metaStore.write(bucket, meta);
         } finally {
             lock.writeLock().unlock();
@@ -209,7 +213,7 @@ public final class ObjectService {
                     dstKey, dstObjectId, srcMeta.size(),
                     srcMeta.contentType(), "\"" + etag + "\"",
                     now, now, "STANDARD",
-                    null, srcMeta.userMetadata(), null, "private", false, null);
+                    null, srcMeta.userMetadata(), null, "private", false, null, null, null);
             metaStore.write(dstBucket, dstMeta);
         } finally {
             lock.writeLock().unlock();

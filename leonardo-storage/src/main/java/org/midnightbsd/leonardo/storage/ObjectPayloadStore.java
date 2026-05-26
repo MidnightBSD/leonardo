@@ -16,11 +16,16 @@ import org.midnightbsd.leonardo.storage.layout.StorageLayout;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.List;
 
 /**
  * Stores and retrieves object payload bytes under
@@ -73,6 +78,67 @@ public final class ObjectPayloadStore {
     /** Deletes the data file. Silently succeeds if it doesn't exist. */
     public void delete(final String bucket, final String objectId) throws IOException {
         Files.deleteIfExists(layout.objectDataFile(bucket, objectId));
+    }
+
+    // -------------------------------------------------------------------------
+    // Multipart assembly
+    // -------------------------------------------------------------------------
+
+    /**
+     * Assembles a multipart object by streaming {@code partPaths} sequentially into
+     * the final data file. Uses {@link FileChannel#transferTo} to avoid buffering
+     * the entire payload in memory. Returns the total assembled byte count.
+     */
+    public long writeFromParts(
+            final String bucket,
+            final String objectId,
+            final List<Path> partPaths) throws IOException {
+
+        long total = 0;
+        for (final Path p : partPaths) {
+            total += Files.size(p);
+        }
+        final long totalSize = total;
+
+        writer.write(layout.objectDataFile(bucket, objectId), out -> {
+            try {
+                final var dst = Channels.newChannel(out);
+                for (final Path partPath : partPaths) {
+                    try (FileChannel src = FileChannel.open(partPath, StandardOpenOption.READ)) {
+                        long remaining = src.size();
+                        long position = 0;
+                        while (remaining > 0) {
+                            final long n = src.transferTo(position, remaining, dst);
+                            if (n <= 0) break;
+                            position  += n;
+                            remaining -= n;
+                        }
+                    }
+                }
+            } catch (final IOException ex) {
+                throw new UncheckedIOException(ex);
+            }
+        });
+        return totalSize;
+    }
+
+    /**
+     * Computes the multipart ETag: MD5 of the concatenated raw MD5 bytes of each
+     * part (in order), appended with {@code -<partCount>}.
+     *
+     * <p>Each element of {@code partEtagHex} must be a 32-character lowercase hex
+     * string (the part MD5 returned by {@code UploadPart}).
+     */
+    public static String computeMultipartEtag(final List<String> partEtagHex) {
+        try {
+            final MessageDigest md = MessageDigest.getInstance("MD5");
+            for (final String hex : partEtagHex) {
+                md.update(HexFormat.of().parseHex(hex));
+            }
+            return "\"" + HexFormat.of().formatHex(md.digest()) + "-" + partEtagHex.size() + "\"";
+        } catch (final NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("MD5 unavailable", ex);
+        }
     }
 
     // -------------------------------------------------------------------------

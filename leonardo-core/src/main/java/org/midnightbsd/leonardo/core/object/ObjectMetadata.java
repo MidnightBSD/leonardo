@@ -38,7 +38,9 @@ public record ObjectMetadata(
         Map<String, String> tags,
         String aclCanned,
         boolean legalHold,
-        RetentionConfig retention
+        RetentionConfig retention,
+        Map<String, String> checksums,
+        Integer partsCount
 ) {
 
     public record ObjectVersion(

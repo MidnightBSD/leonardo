@@ -27,6 +27,7 @@ import io.micronaut.http.annotation.Put;
 import io.micronaut.http.annotation.QueryValue;
 import org.midnightbsd.leonardo.core.S3Exception;
 import org.midnightbsd.leonardo.core.bucket.BucketService;
+import org.midnightbsd.leonardo.core.multipart.MultipartService;
 import org.midnightbsd.leonardo.core.object.ObjectMetadataStore;
 import org.midnightbsd.leonardo.core.object.ObjectService;
 import org.midnightbsd.leonardo.xml.DeleteObjectsRequest;
@@ -58,12 +59,15 @@ public final class BucketController {
 
     private final BucketService bucketService;
     private final ObjectService objectService;
+    private final MultipartService multipartService;
 
     public BucketController(
             final BucketService bucketService,
-            final ObjectService objectService) {
-        this.bucketService = bucketService;
-        this.objectService = objectService;
+            final ObjectService objectService,
+            final MultipartService multipartService) {
+        this.bucketService    = bucketService;
+        this.objectService    = objectService;
+        this.multipartService = multipartService;
     }
 
     // -------------------------------------------------------------------------
@@ -141,11 +145,20 @@ public final class BucketController {
             @QueryValue(value = "continuation-token", defaultValue = "") final String continuationToken,
             @QueryValue(value = "start-after", defaultValue = "") final String startAfter,
             @QueryValue(value = "marker", defaultValue = "") final String marker,
+            @QueryValue(value = "key-marker", defaultValue = "") final String keyMarker,
+            @QueryValue(value = "upload-id-marker", defaultValue = "") final String uploadIdMarker,
+            @QueryValue(value = "max-uploads", defaultValue = "1000") final int maxUploads,
             final HttpRequest<?> request) {
 
         // GetBucketLocation
         if (request.getParameters().contains("location")) {
             return getBucketLocation(bucket);
+        }
+
+        // ListMultipartUploads
+        if (request.getParameters().contains("uploads")) {
+            return listMultipartUploads(bucket, prefix, delimiter,
+                    keyMarker, uploadIdMarker, maxUploads);
         }
 
         // ListObjectsV2 (list-type=2) or ListObjects v1
@@ -199,6 +212,48 @@ public final class BucketController {
             return s3Error(ex);
         } catch (final IOException ex) {
             LOG.error("ListObjects '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> listMultipartUploads(
+            final String bucket,
+            final String prefix,
+            final String delimiter,
+            final String keyMarker,
+            final String uploadIdMarker,
+            final int maxUploads) {
+        try {
+            final MultipartService.ListUploadsPage page = multipartService.listMultipartUploads(
+                    bucket,
+                    prefix.isEmpty() ? null : prefix,
+                    delimiter.isEmpty() ? null : delimiter,
+                    keyMarker.isEmpty() ? null : keyMarker,
+                    uploadIdMarker.isEmpty() ? null : uploadIdMarker,
+                    maxUploads);
+
+            final var uploads = page.uploads().stream()
+                    .map(u -> new S3Xml.UploadEntry(
+                            u.key(), u.uploadId(), u.owner(), "STANDARD", u.initiated()))
+                    .toList();
+
+            final String xml = S3Xml.listMultipartUploads(
+                    bucket,
+                    prefix.isEmpty() ? null : prefix,
+                    delimiter.isEmpty() ? null : delimiter,
+                    keyMarker.isEmpty() ? null : keyMarker,
+                    uploadIdMarker.isEmpty() ? null : uploadIdMarker,
+                    maxUploads,
+                    page.truncated(),
+                    page.nextKeyMarker(),
+                    page.nextUploadIdMarker(),
+                    uploads,
+                    page.commonPrefixes());
+            return HttpResponse.ok(xml).contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IOException ex) {
+            LOG.error("ListMultipartUploads '{}' failed", bucket, ex);
             return internalError();
         }
     }
