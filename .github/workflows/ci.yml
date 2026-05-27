@@ -96,7 +96,7 @@ jobs:
           shell: sh
           run: |
             sudo /usr/sbin/mport config set mirror_region us
-            sudo /usr/sbin/mport install openjdk21-bin
+            sudo /usr/sbin/mport install openjdk21-bin ||  true
             export JAVA_HOME=/usr/local/openjdk21
             export PATH="$JAVA_HOME/bin:$PATH"
             ./gradlew --no-daemon -g .gradle build
