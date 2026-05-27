@@ -25,6 +25,7 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
 import java.util.List;
+import java.util.function.UnaryOperator;
 
 /**
  * Business logic for bucket lifecycle operations (CreateBucket, DeleteBucket,
@@ -93,7 +94,7 @@ public final class BucketService {
                     null, null, null, null, null, null, null, null, null,
                     BucketMetadata.CallerObjectIdsMode.ALLOWED,
                     BucketMetadata.FsyncMode.INHERIT,
-                    null, false, null, null);
+                    null, false, null, null, null, null);
             store.write(meta);
         } finally {
             lock.writeLock().unlock();
@@ -155,6 +156,37 @@ public final class BucketService {
      */
     public BucketMetadata getBucketMetadata(final String name) {
         return store.read(name).orElseThrow(() -> S3Exception.noSuchBucket(name));
+    }
+
+    /**
+     * Applies {@code updater} to a bucket's current metadata and writes the
+     * result atomically under the per-bucket write lock.
+     *
+     * @param name    the bucket name
+     * @param updater receives the current metadata, returns the updated form
+     * @return the updated metadata after successful write
+     * @throws S3Exception if the bucket doesn't exist or the invariant check fails
+     * @throws IOException on filesystem errors
+     */
+    public BucketMetadata updateBucket(
+            final String name,
+            final UnaryOperator<BucketMetadata> updater) throws IOException {
+        final var lock = locks.lockFor(name);
+        lock.writeLock().lock();
+        try {
+            final BucketMetadata current = store.read(name)
+                    .orElseThrow(() -> S3Exception.noSuchBucket(name));
+            final BucketMetadata updated = updater.apply(current);
+            try {
+                updated.validateInvariants();
+            } catch (final IllegalArgumentException ex) {
+                throw new S3Exception("InvalidBucketState", ex.getMessage(), 409);
+            }
+            store.write(updated);
+            return updated;
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
     // -------------------------------------------------------------------------

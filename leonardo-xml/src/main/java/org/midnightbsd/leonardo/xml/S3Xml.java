@@ -193,6 +193,164 @@ public final class S3Xml {
     }
 
     // -------------------------------------------------------------------------
+    // Phase 3 — bucket configuration GET responses
+    // -------------------------------------------------------------------------
+
+    public record GrantEntry(String grantee, String permission) {}
+
+    /** Response body for GetBucketAcl. */
+    public static String getBucketAcl(
+            final String owner,
+            final String canned,
+            final List<GrantEntry> grants) {
+        final var sb = new StringBuilder(PREAMBLE);
+        sb.append("<AccessControlPolicy").append(NS).append(">");
+        sb.append("<Owner>").append(t("ID", owner)).append(t("DisplayName", owner)).append("</Owner>");
+        sb.append("<AccessControlList>");
+        if (grants != null) {
+            for (final var g : grants) {
+                sb.append("<Grant>")
+                        .append("<Grantee xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"")
+                        .append(" xsi:type=\"CanonicalUser\">")
+                        .append(t("ID", g.grantee())).append(t("DisplayName", g.grantee()))
+                        .append("</Grantee>")
+                        .append(t("Permission", g.permission()))
+                        .append("</Grant>");
+            }
+        } else if (canned != null) {
+            // Represent canned ACL as a single owner FULL_CONTROL grant
+            sb.append("<Grant>")
+                    .append("<Grantee xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"")
+                    .append(" xsi:type=\"CanonicalUser\">")
+                    .append(t("ID", owner)).append(t("DisplayName", owner))
+                    .append("</Grantee>")
+                    .append(t("Permission", "FULL_CONTROL"))
+                    .append("</Grant>");
+        }
+        sb.append("</AccessControlList></AccessControlPolicy>");
+        return sb.toString();
+    }
+
+    public record CorsRuleEntry(
+            List<String> allowedOrigins,
+            List<String> allowedMethods,
+            List<String> allowedHeaders,
+            List<String> exposeHeaders,
+            Integer maxAgeSeconds) {}
+
+    /** Response body for GetBucketCors. */
+    public static String getBucketCors(final List<CorsRuleEntry> rules) {
+        final var sb = new StringBuilder(PREAMBLE);
+        sb.append("<CORSConfiguration").append(NS).append(">");
+        for (final var r : rules) {
+            sb.append("<CORSRule>");
+            if (r.allowedOrigins() != null) r.allowedOrigins().forEach(v -> sb.append(t("AllowedOrigin", v)));
+            if (r.allowedMethods() != null) r.allowedMethods().forEach(v -> sb.append(t("AllowedMethod", v)));
+            if (r.allowedHeaders() != null) r.allowedHeaders().forEach(v -> sb.append(t("AllowedHeader", v)));
+            if (r.exposeHeaders()  != null) r.exposeHeaders().forEach(v -> sb.append(t("ExposeHeader", v)));
+            if (r.maxAgeSeconds() != null) sb.append(t("MaxAgeSeconds", String.valueOf(r.maxAgeSeconds())));
+            sb.append("</CORSRule>");
+        }
+        sb.append("</CORSConfiguration>");
+        return sb.toString();
+    }
+
+    /** Response body for GetBucketTagging. */
+    public static String getBucketTagging(final Map<String, String> tags) {
+        final var sb = new StringBuilder(PREAMBLE);
+        sb.append("<Tagging").append(NS).append("><TagSet>");
+        if (tags != null) {
+            tags.forEach((k, v) ->
+                    sb.append("<Tag>").append(t("Key", k)).append(t("Value", v)).append("</Tag>"));
+        }
+        sb.append("</TagSet></Tagging>");
+        return sb.toString();
+    }
+
+    /**
+     * Response body for GetBucketVersioning.
+     *
+     * @param status   "Enabled" | "Suspended" | null (null → empty element, versioning never set)
+     * @param mfaDelete true if MFA delete is required
+     */
+    public static String getBucketVersioning(final String status, final boolean mfaDelete) {
+        final var sb = new StringBuilder(PREAMBLE);
+        sb.append("<VersioningConfiguration").append(NS).append(">");
+        if (status != null && !status.isEmpty()) {
+            sb.append(t("Status", status));
+            sb.append(t("MfaDelete", mfaDelete ? "Enabled" : "Disabled"));
+        }
+        sb.append("</VersioningConfiguration>");
+        return sb.toString();
+    }
+
+    /** Response body for GetBucketWebsite. */
+    public static String getBucketWebsite(
+            final String indexDocument, final String errorDocument) {
+        final var sb = new StringBuilder(PREAMBLE);
+        sb.append("<WebsiteConfiguration").append(NS).append(">");
+        if (indexDocument != null && !indexDocument.isEmpty()) {
+            sb.append("<IndexDocument>").append(t("Suffix", indexDocument)).append("</IndexDocument>");
+        }
+        if (errorDocument != null && !errorDocument.isEmpty()) {
+            sb.append("<ErrorDocument>").append(t("Key", errorDocument)).append("</ErrorDocument>");
+        }
+        sb.append("</WebsiteConfiguration>");
+        return sb.toString();
+    }
+
+    public record LifecycleRuleEntry(
+            String id, String status, String prefix, Integer expirationDays) {}
+
+    /** Response body for GetBucketLifecycleConfiguration. */
+    public static String getBucketLifecycle(final List<LifecycleRuleEntry> rules) {
+        final var sb = new StringBuilder(PREAMBLE);
+        sb.append("<LifecycleConfiguration").append(NS).append(">");
+        for (final var r : rules) {
+            sb.append("<Rule>");
+            if (r.id()     != null) sb.append(t("ID",     r.id()));
+            if (r.status() != null) sb.append(t("Status", r.status()));
+            final String pfx = r.prefix() != null ? r.prefix() : "";
+            sb.append("<Filter>").append(t("Prefix", pfx)).append("</Filter>");
+            if (r.expirationDays() != null) {
+                sb.append("<Expiration>")
+                        .append(t("Days", String.valueOf(r.expirationDays())))
+                        .append("</Expiration>");
+            }
+            sb.append("</Rule>");
+        }
+        sb.append("</LifecycleConfiguration>");
+        return sb.toString();
+    }
+
+    /** Response body for GetBucketPolicyStatus. */
+    public static String getBucketPolicyStatus(final boolean isPublic) {
+        return PREAMBLE + "<PolicyStatus" + NS + ">"
+                + t("IsPublic", String.valueOf(isPublic)) + "</PolicyStatus>";
+    }
+
+    /** Response body for GetPublicAccessBlock. */
+    public static String getPublicAccessBlock(
+            final boolean blockPublicAcls,
+            final boolean ignorePublicAcls,
+            final boolean blockPublicPolicy,
+            final boolean restrictPublicBuckets) {
+        return PREAMBLE + "<PublicAccessBlockConfiguration" + NS + ">"
+                + t("BlockPublicAcls",       String.valueOf(blockPublicAcls))
+                + t("IgnorePublicAcls",      String.valueOf(ignorePublicAcls))
+                + t("BlockPublicPolicy",     String.valueOf(blockPublicPolicy))
+                + t("RestrictPublicBuckets", String.valueOf(restrictPublicBuckets))
+                + "</PublicAccessBlockConfiguration>";
+    }
+
+    /** Response body for GetBucketRequestPayment. */
+    public static String getBucketRequestPayment(final String payer) {
+        return PREAMBLE + "<RequestPaymentConfiguration" + NS + ">"
+                + t("Payer", payer != null ? payer : "BucketOwner")
+                + "</RequestPaymentConfiguration>";
+    }
+
+    // -------------------------------------------------------------------------
     // Multipart upload operations
     // -------------------------------------------------------------------------
 

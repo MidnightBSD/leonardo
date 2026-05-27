@@ -47,7 +47,9 @@ public record BucketMetadata(
         Long pathQuotaBytes,               // null = no quota
         boolean immutable,
         String defaultContentType,         // null = no default
-        RateLimitConfig rateLimit
+        RateLimitConfig rateLimit,
+        PublicAccessBlockConfig publicAccessBlock,
+        String requestPayer               // "BucketOwner" | "Requester" | null
 ) {
     public enum CallerObjectIdsMode {
         @JsonProperty("required") REQUIRED,
@@ -84,11 +86,83 @@ public record BucketMetadata(
     public record WebsiteConfig(boolean enabled, String indexDocument, String errorDocument) {}
     public record EncryptionConfig(String defaultAlgorithm) {}   // none | AES256
     public record ObjectLockConfig(boolean enabled) {}
+    public record PublicAccessBlockConfig(
+            boolean blockPublicAcls,
+            boolean ignorePublicAcls,
+            boolean blockPublicPolicy,
+            boolean restrictPublicBuckets) {}
     public record RateLimitConfig(
             Long requestsPerSecond,
             Long bytesPerSecond,
             int burstMultiplier,
             RateLimitScope scope) {}
+
+    // -------------------------------------------------------------------------
+    // Copy helpers — each returns a new record with one field replaced.
+    // -------------------------------------------------------------------------
+
+    public BucketMetadata withAcl(final AclConfig newAcl) {
+        return new BucketMetadata(name, createdAt, owner, region, versioning, newAcl, tags,
+                lifecycle, cors, website, encryption, objectLock, policyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, publicAccessBlock, requestPayer);
+    }
+
+    public BucketMetadata withCors(final CorsConfig newCors) {
+        return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
+                lifecycle, newCors, website, encryption, objectLock, policyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, publicAccessBlock, requestPayer);
+    }
+
+    public BucketMetadata withTags(final Map<String, String> newTags) {
+        return new BucketMetadata(name, createdAt, owner, region, versioning, acl, newTags,
+                lifecycle, cors, website, encryption, objectLock, policyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, publicAccessBlock, requestPayer);
+    }
+
+    public BucketMetadata withVersioning(final VersioningConfig newVersioning) {
+        return new BucketMetadata(name, createdAt, owner, region, newVersioning, acl, tags,
+                lifecycle, cors, website, encryption, objectLock, policyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, publicAccessBlock, requestPayer);
+    }
+
+    public BucketMetadata withWebsite(final WebsiteConfig newWebsite) {
+        return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
+                lifecycle, cors, newWebsite, encryption, objectLock, policyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, publicAccessBlock, requestPayer);
+    }
+
+    public BucketMetadata withLifecycle(final LifecycleConfig newLifecycle) {
+        return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
+                newLifecycle, cors, website, encryption, objectLock, policyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, publicAccessBlock, requestPayer);
+    }
+
+    public BucketMetadata withPolicyJson(final String newPolicyJson) {
+        return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
+                lifecycle, cors, website, encryption, objectLock, newPolicyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, publicAccessBlock, requestPayer);
+    }
+
+    public BucketMetadata withPublicAccessBlock(final PublicAccessBlockConfig newPab) {
+        return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
+                lifecycle, cors, website, encryption, objectLock, policyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, newPab, requestPayer);
+    }
+
+    public BucketMetadata withRequestPayer(final String newRequestPayer) {
+        return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
+                lifecycle, cors, website, encryption, objectLock, policyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, publicAccessBlock, newRequestPayer);
+    }
 
     /**
      * Validates invariants from the project plan. Throws

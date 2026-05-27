@@ -20,12 +20,14 @@ import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Delete;
 import io.micronaut.http.annotation.Get;
 import io.micronaut.http.annotation.Head;
+import io.micronaut.http.annotation.Header;
 import io.micronaut.http.annotation.PathVariable;
 import io.micronaut.http.annotation.Post;
 import io.micronaut.http.annotation.Produces;
 import io.micronaut.http.annotation.Put;
 import io.micronaut.http.annotation.QueryValue;
 import org.midnightbsd.leonardo.core.S3Exception;
+import org.midnightbsd.leonardo.core.bucket.BucketMetadata;
 import org.midnightbsd.leonardo.core.bucket.BucketService;
 import org.midnightbsd.leonardo.core.multipart.MultipartService;
 import org.midnightbsd.leonardo.core.object.ObjectMetadataStore;
@@ -34,11 +36,11 @@ import org.midnightbsd.leonardo.xml.DeleteObjectsRequest;
 import org.midnightbsd.leonardo.xml.S3Xml;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.w3c.dom.Element;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 
@@ -46,9 +48,18 @@ import java.util.Optional;
  * S3 bucket-level endpoints:
  * <ul>
  *   <li>{@code HEAD /<bucket>} — HeadBucket</li>
- *   <li>{@code PUT /<bucket>} — CreateBucket</li>
- *   <li>{@code DELETE /<bucket>} — DeleteBucket</li>
- *   <li>{@code GET /<bucket>} — ListObjectsV2 / ListObjects / GetBucketLocation</li>
+ *   <li>{@code PUT /<bucket>} — CreateBucket; with sub-resource params: PutBucketAcl,
+ *       PutBucketCors, PutBucketTagging, PutBucketVersioning, PutBucketWebsite,
+ *       PutBucketLifecycleConfiguration, PutBucketPolicy, PutPublicAccessBlock,
+ *       PutBucketRequestPayment</li>
+ *   <li>{@code DELETE /<bucket>} — DeleteBucket; with sub-resource params:
+ *       DeleteBucketCors, DeleteBucketTagging, DeleteBucketWebsite,
+ *       DeleteBucketLifecycle, DeleteBucketPolicy, DeletePublicAccessBlock</li>
+ *   <li>{@code GET /<bucket>} — ListObjectsV2/ListObjects, GetBucketLocation,
+ *       ListMultipartUploads, GetBucketAcl, GetBucketCors, GetBucketTagging,
+ *       GetBucketVersioning, GetBucketWebsite, GetBucketLifecycleConfiguration,
+ *       GetBucketPolicy, GetBucketPolicyStatus, GetPublicAccessBlock,
+ *       GetBucketRequestPayment</li>
  *   <li>{@code POST /<bucket>?delete} — DeleteObjects</li>
  * </ul>
  */
@@ -85,20 +96,49 @@ public final class BucketController {
     }
 
     // -------------------------------------------------------------------------
-    // CreateBucket
+    // PUT /<bucket> — CreateBucket + Phase 3 bucket configuration
     // -------------------------------------------------------------------------
 
     @Put
     @Produces(MediaType.APPLICATION_XML)
-    public HttpResponse<String> createBucket(
+    public HttpResponse<String> putBucket(
             @PathVariable final String bucket,
+            @Header(value = "x-amz-acl", defaultValue = "") final String cannedAcl,
             @Body final byte[] body,
             final HttpRequest<?> request) {
 
+        if (request.getParameters().contains("acl")) {
+            return putBucketAcl(bucket, body, cannedAcl);
+        }
+        if (request.getParameters().contains("cors")) {
+            return putBucketCors(bucket, body);
+        }
+        if (request.getParameters().contains("tagging")) {
+            return putBucketTagging(bucket, body);
+        }
+        if (request.getParameters().contains("versioning")) {
+            return putBucketVersioning(bucket, body);
+        }
+        if (request.getParameters().contains("website")) {
+            return putBucketWebsite(bucket, body);
+        }
+        if (request.getParameters().contains("lifecycle")) {
+            return putBucketLifecycle(bucket, body);
+        }
+        if (request.getParameters().contains("policy")) {
+            return putBucketPolicy(bucket, body);
+        }
+        if (request.getParameters().contains("publicAccessBlock")) {
+            return putPublicAccessBlock(bucket, body);
+        }
+        if (request.getParameters().contains("requestPayment")) {
+            return putBucketRequestPayment(bucket, body);
+        }
+
+        // CreateBucket
         final String identity = request.getAttribute("s3.identity", String.class)
                 .orElse("anonymous");
         final String locationConstraint = parseLocationConstraint(body);
-
         try {
             bucketService.createBucket(bucket, identity, locationConstraint);
             return HttpResponse.<String>ok()
@@ -112,12 +152,35 @@ public final class BucketController {
     }
 
     // -------------------------------------------------------------------------
-    // DeleteBucket
+    // DELETE /<bucket> — DeleteBucket + Phase 3 deletes
     // -------------------------------------------------------------------------
 
     @Delete
     @Produces(MediaType.APPLICATION_XML)
-    public HttpResponse<String> deleteBucket(@PathVariable final String bucket) {
+    public HttpResponse<String> deleteBucket(
+            @PathVariable final String bucket,
+            final HttpRequest<?> request) {
+
+        if (request.getParameters().contains("cors")) {
+            return deleteBucketCors(bucket);
+        }
+        if (request.getParameters().contains("tagging")) {
+            return deleteBucketTagging(bucket);
+        }
+        if (request.getParameters().contains("website")) {
+            return deleteBucketWebsite(bucket);
+        }
+        if (request.getParameters().contains("lifecycle")) {
+            return deleteBucketLifecycle(bucket);
+        }
+        if (request.getParameters().contains("policy")) {
+            return deleteBucketPolicy(bucket);
+        }
+        if (request.getParameters().contains("publicAccessBlock")) {
+            return deletePublicAccessBlock(bucket);
+        }
+
+        // DeleteBucket
         try {
             bucketService.deleteBucket(bucket);
             return HttpResponse.<String>status(HttpStatus.NO_CONTENT);
@@ -130,14 +193,14 @@ public final class BucketController {
     }
 
     // -------------------------------------------------------------------------
-    // GET /<bucket> — ListObjectsV2 / ListObjects / GetBucketLocation
+    // GET /<bucket> — ListObjectsV2 / ListObjects / GetBucketLocation /
+    //                 ListMultipartUploads + Phase 3 GETs
     // -------------------------------------------------------------------------
 
     @Get
     @Produces(MediaType.APPLICATION_XML)
     public HttpResponse<String> getBucket(
             @PathVariable final String bucket,
-            @QueryValue(value = "location", defaultValue = "") final String location,
             @QueryValue(value = "list-type", defaultValue = "") final String listType,
             @QueryValue(value = "prefix", defaultValue = "") final String prefix,
             @QueryValue(value = "delimiter", defaultValue = "") final String delimiter,
@@ -150,25 +213,52 @@ public final class BucketController {
             @QueryValue(value = "max-uploads", defaultValue = "1000") final int maxUploads,
             final HttpRequest<?> request) {
 
-        // GetBucketLocation
+        // Sub-resource dispatching (query-param presence, no value needed)
         if (request.getParameters().contains("location")) {
             return getBucketLocation(bucket);
         }
-
-        // ListMultipartUploads
         if (request.getParameters().contains("uploads")) {
             return listMultipartUploads(bucket, prefix, delimiter,
                     keyMarker, uploadIdMarker, maxUploads);
+        }
+        if (request.getParameters().contains("acl")) {
+            return getBucketAcl(bucket);
+        }
+        if (request.getParameters().contains("cors")) {
+            return getBucketCors(bucket);
+        }
+        if (request.getParameters().contains("tagging")) {
+            return getBucketTagging(bucket);
+        }
+        if (request.getParameters().contains("versioning")) {
+            return getBucketVersioning(bucket);
+        }
+        if (request.getParameters().contains("website")) {
+            return getBucketWebsite(bucket);
+        }
+        if (request.getParameters().contains("lifecycle")) {
+            return getBucketLifecycle(bucket);
+        }
+        if (request.getParameters().contains("policy")) {
+            return getBucketPolicy(bucket);
+        }
+        if (request.getParameters().contains("policyStatus")) {
+            return getBucketPolicyStatus(bucket);
+        }
+        if (request.getParameters().contains("publicAccessBlock")) {
+            return getBucketPublicAccessBlock(bucket);
+        }
+        if (request.getParameters().contains("requestPayment")) {
+            return getBucketRequestPayment(bucket);
         }
 
         // ListObjectsV2 (list-type=2) or ListObjects v1
         final boolean isV2 = "2".equals(listType);
         try {
-            bucketService.headBucket(bucket); // 404 if bucket missing
+            bucketService.headBucket(bucket);
 
             final String startAfterKey;
             if (isV2) {
-                // continuationToken takes precedence over start-after
                 if (!continuationToken.isEmpty()) {
                     startAfterKey = S3Xml.decodeContinuationToken(continuationToken);
                 } else {
@@ -178,12 +268,13 @@ public final class BucketController {
                 startAfterKey = marker.isEmpty() ? null : marker;
             }
 
-            final ObjectMetadataStore.ListPage page = objectService.listObjects(
-                    bucket,
-                    prefix.isEmpty() ? null : prefix,
-                    delimiter.isEmpty() ? null : delimiter,
-                    maxKeys,
-                    startAfterKey);
+            final org.midnightbsd.leonardo.core.object.ObjectMetadataStore.ListPage page =
+                    objectService.listObjects(
+                            bucket,
+                            prefix.isEmpty() ? null : prefix,
+                            delimiter.isEmpty() ? null : delimiter,
+                            maxKeys,
+                            startAfterKey);
 
             final List<S3Xml.ObjectEntry> entries = page.objects().stream()
                     .map(m -> new S3Xml.ObjectEntry(
@@ -215,6 +306,422 @@ public final class BucketController {
             return internalError();
         }
     }
+
+    // -------------------------------------------------------------------------
+    // POST /<bucket>?delete — DeleteObjects
+    // -------------------------------------------------------------------------
+
+    @Post
+    @Produces(MediaType.APPLICATION_XML)
+    public HttpResponse<String> postBucket(
+            @PathVariable final String bucket,
+            @Body final byte[] body,
+            final HttpRequest<?> request) {
+
+        if (!request.getParameters().contains("delete")) {
+            return s3Error(S3Xml.error("MethodNotAllowed",
+                    "The specified method is not allowed against this resource.", null), 405);
+        }
+
+        try {
+            final DeleteObjectsRequest deleteReq = DeleteObjectsRequest.parse(body);
+            final ObjectService.DeleteResult result =
+                    objectService.deleteObjects(bucket, deleteReq.keys());
+
+            final List<S3Xml.DeletedEntry> deleted = result.deleted().stream()
+                    .map(S3Xml.DeletedEntry::new).toList();
+            final List<S3Xml.DeleteErrorEntry> errors = result.errors().stream()
+                    .map(e -> new S3Xml.DeleteErrorEntry(e.key(), e.code(), e.message()))
+                    .toList();
+
+            if (deleteReq.quiet() && errors.isEmpty()) {
+                return HttpResponse.<String>ok()
+                        .contentType(MediaType.APPLICATION_XML)
+                        .body(S3Xml.deleteResult(List.of(), List.of()));
+            }
+            return HttpResponse.ok(S3Xml.deleteResult(deleted, errors))
+                    .contentType(MediaType.APPLICATION_XML);
+
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final Exception ex) {
+            LOG.error("DeleteObjects '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    // =========================================================================
+    // Phase 3 — bucket configuration PUT handlers
+    // =========================================================================
+
+    private HttpResponse<String> putBucketAcl(
+            final String bucket, final byte[] body, final String cannedAcl) {
+        try {
+            final BucketMetadata.AclConfig acl =
+                    BucketConfigParser.parseAcl(body, cannedAcl);
+            bucketService.updateBucket(bucket, meta -> meta.withAcl(acl));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketAcl '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> putBucketCors(
+            final String bucket, final byte[] body) {
+        try {
+            final BucketMetadata.CorsConfig cors = BucketConfigParser.parseCors(body);
+            bucketService.updateBucket(bucket, meta -> meta.withCors(cors));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketCors '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> putBucketTagging(
+            final String bucket, final byte[] body) {
+        try {
+            final var tags = BucketConfigParser.parseTagging(body);
+            bucketService.updateBucket(bucket, meta -> meta.withTags(tags.isEmpty() ? null : tags));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketTagging '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> putBucketVersioning(
+            final String bucket, final byte[] body) {
+        try {
+            final BucketMetadata.VersioningConfig vc = BucketConfigParser.parseVersioning(body);
+            bucketService.updateBucket(bucket, current -> {
+                final BucketMetadata.VersioningConfig existing = current.versioning();
+                final BucketMetadata.VersioningStatus newStatus = vc.status() != null
+                        ? vc.status()
+                        : (existing != null ? existing.status() : null);
+                return current.withVersioning(
+                        new BucketMetadata.VersioningConfig(newStatus, vc.mfaDelete()));
+            });
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("IllegalVersioningConfigurationException",
+                    ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketVersioning '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> putBucketWebsite(
+            final String bucket, final byte[] body) {
+        try {
+            final BucketMetadata.WebsiteConfig ws = BucketConfigParser.parseWebsite(body);
+            bucketService.updateBucket(bucket, meta -> meta.withWebsite(ws));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketWebsite '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> putBucketLifecycle(
+            final String bucket, final byte[] body) {
+        try {
+            final BucketMetadata.LifecycleConfig lc = BucketConfigParser.parseLifecycle(body);
+            bucketService.updateBucket(bucket, meta -> meta.withLifecycle(lc));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketLifecycle '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> putBucketPolicy(
+            final String bucket, final byte[] body) {
+        try {
+            if (body == null || body.length == 0) {
+                return s3Error(S3Xml.error("MalformedPolicy",
+                        "Policy body must not be empty.", null), 400);
+            }
+            final String policyJson = new String(body, StandardCharsets.UTF_8);
+            bucketService.updateBucket(bucket, meta -> meta.withPolicyJson(policyJson));
+            return HttpResponse.<String>status(HttpStatus.NO_CONTENT);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketPolicy '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> putPublicAccessBlock(
+            final String bucket, final byte[] body) {
+        try {
+            final BucketMetadata.PublicAccessBlockConfig pab =
+                    BucketConfigParser.parsePublicAccessBlock(body);
+            bucketService.updateBucket(bucket, meta -> meta.withPublicAccessBlock(pab));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutPublicAccessBlock '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> putBucketRequestPayment(
+            final String bucket, final byte[] body) {
+        try {
+            final String payer = BucketConfigParser.parseRequestPayer(body);
+            bucketService.updateBucket(bucket, meta -> meta.withRequestPayer(payer));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketRequestPayment '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    // =========================================================================
+    // Phase 3 — bucket configuration DELETE handlers
+    // =========================================================================
+
+    private HttpResponse<String> deleteBucketCors(final String bucket) {
+        return clearBucketConfig(bucket, meta -> meta.withCors(null), "DeleteBucketCors");
+    }
+
+    private HttpResponse<String> deleteBucketTagging(final String bucket) {
+        return clearBucketConfig(bucket, meta -> meta.withTags(null), "DeleteBucketTagging");
+    }
+
+    private HttpResponse<String> deleteBucketWebsite(final String bucket) {
+        return clearBucketConfig(bucket, meta -> meta.withWebsite(null), "DeleteBucketWebsite");
+    }
+
+    private HttpResponse<String> deleteBucketLifecycle(final String bucket) {
+        return clearBucketConfig(bucket, meta -> meta.withLifecycle(null), "DeleteBucketLifecycle");
+    }
+
+    private HttpResponse<String> deleteBucketPolicy(final String bucket) {
+        return clearBucketConfig(bucket, meta -> meta.withPolicyJson(null), "DeleteBucketPolicy");
+    }
+
+    private HttpResponse<String> deletePublicAccessBlock(final String bucket) {
+        return clearBucketConfig(bucket,
+                meta -> meta.withPublicAccessBlock(null), "DeletePublicAccessBlock");
+    }
+
+    private HttpResponse<String> clearBucketConfig(
+            final String bucket,
+            final java.util.function.UnaryOperator<BucketMetadata> updater,
+            final String opName) {
+        try {
+            bucketService.updateBucket(bucket, updater);
+            return HttpResponse.<String>status(HttpStatus.NO_CONTENT);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IOException ex) {
+            LOG.error("{} '{}' failed", opName, bucket, ex);
+            return internalError();
+        }
+    }
+
+    // =========================================================================
+    // Phase 3 — bucket configuration GET handlers
+    // =========================================================================
+
+    private HttpResponse<String> getBucketAcl(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            final BucketMetadata.AclConfig acl = meta.acl();
+            final String owner = meta.owner() != null ? meta.owner() : "";
+            final List<S3Xml.GrantEntry> grants;
+            if (acl != null && acl.grants() != null && !acl.grants().isEmpty()) {
+                grants = acl.grants().stream()
+                        .map(g -> new S3Xml.GrantEntry(g.grantee(), g.permission()))
+                        .toList();
+            } else {
+                grants = null;
+            }
+            final String canned = acl != null ? acl.canned() : "private";
+            return HttpResponse.ok(S3Xml.getBucketAcl(owner, canned, grants))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> getBucketCors(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            if (meta.cors() == null
+                    || meta.cors().rules() == null
+                    || meta.cors().rules().isEmpty()) {
+                return s3Error(S3Xml.error("NoSuchCORSConfiguration",
+                        "The CORS configuration does not exist.", null), 404);
+            }
+            final List<S3Xml.CorsRuleEntry> rules = meta.cors().rules().stream()
+                    .map(r -> new S3Xml.CorsRuleEntry(
+                            r.allowedOrigins(), r.allowedMethods(),
+                            r.allowedHeaders(), r.exposeHeaders(), r.maxAgeSeconds()))
+                    .toList();
+            return HttpResponse.ok(S3Xml.getBucketCors(rules))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> getBucketTagging(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            return HttpResponse.ok(S3Xml.getBucketTagging(meta.tags()))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> getBucketVersioning(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            final BucketMetadata.VersioningConfig vc = meta.versioning();
+            final String status = vc == null || vc.status() == null ? null
+                    : switch (vc.status()) {
+                        case ENABLED   -> "Enabled";
+                        case SUSPENDED -> "Suspended";
+                        case DISABLED  -> null;
+                    };
+            final boolean mfa = vc != null && vc.mfaDelete();
+            return HttpResponse.ok(S3Xml.getBucketVersioning(status, mfa))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> getBucketWebsite(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            if (meta.website() == null || !meta.website().enabled()) {
+                return s3Error(S3Xml.error("NoSuchWebsiteConfiguration",
+                        "The specified bucket does not have a website configuration.", null), 404);
+            }
+            return HttpResponse.ok(S3Xml.getBucketWebsite(
+                    meta.website().indexDocument(), meta.website().errorDocument()))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> getBucketLifecycle(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            if (meta.lifecycle() == null
+                    || meta.lifecycle().rules() == null
+                    || meta.lifecycle().rules().isEmpty()) {
+                return s3Error(S3Xml.error("NoSuchLifecycleConfiguration",
+                        "The lifecycle configuration does not exist.", null), 404);
+            }
+            final List<S3Xml.LifecycleRuleEntry> rules = meta.lifecycle().rules().stream()
+                    .map(r -> new S3Xml.LifecycleRuleEntry(
+                            r.id(), r.status(), r.prefix(), r.expirationDays()))
+                    .toList();
+            return HttpResponse.ok(S3Xml.getBucketLifecycle(rules))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> getBucketPolicy(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            if (meta.policyJson() == null || meta.policyJson().isEmpty()) {
+                return s3Error(S3Xml.error("NoSuchBucketPolicy",
+                        "The bucket policy does not exist.", null), 404);
+            }
+            return HttpResponse.ok(meta.policyJson())
+                    .contentType(MediaType.APPLICATION_JSON_TYPE);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> getBucketPolicyStatus(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            // A bucket is "public" if it has a public-read canned ACL
+            final boolean isPublic = meta.acl() != null
+                    && ("public-read".equals(meta.acl().canned())
+                            || "public-read-write".equals(meta.acl().canned()));
+            return HttpResponse.ok(S3Xml.getBucketPolicyStatus(isPublic))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> getBucketPublicAccessBlock(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            if (meta.publicAccessBlock() == null) {
+                return s3Error(S3Xml.error("NoSuchPublicAccessBlockConfiguration",
+                        "The public access block configuration was not found.", null), 404);
+            }
+            final BucketMetadata.PublicAccessBlockConfig pab = meta.publicAccessBlock();
+            return HttpResponse.ok(S3Xml.getPublicAccessBlock(
+                    pab.blockPublicAcls(), pab.ignorePublicAcls(),
+                    pab.blockPublicPolicy(), pab.restrictPublicBuckets()))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> getBucketRequestPayment(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            final String payer = meta.requestPayer() != null ? meta.requestPayer() : "BucketOwner";
+            return HttpResponse.ok(S3Xml.getBucketRequestPayment(payer))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    // =========================================================================
+    // ListMultipartUploads / GetBucketLocation (moved from @Get)
+    // =========================================================================
 
     private HttpResponse<String> listMultipartUploads(
             final String bucket,
@@ -268,54 +775,10 @@ public final class BucketController {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // POST /<bucket>?delete — DeleteObjects
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Error helpers
+    // =========================================================================
 
-    @Post
-    @Produces(MediaType.APPLICATION_XML)
-    public HttpResponse<String> postBucket(
-            @PathVariable final String bucket,
-            @Body final byte[] body,
-            final HttpRequest<?> request) {
-
-        if (!request.getParameters().contains("delete")) {
-            return s3Error(S3Xml.error("MethodNotAllowed",
-                    "The specified method is not allowed against this resource.", null), 405);
-        }
-
-        try {
-            final DeleteObjectsRequest deleteReq = DeleteObjectsRequest.parse(body);
-            final ObjectService.DeleteResult result =
-                    objectService.deleteObjects(bucket, deleteReq.keys());
-
-            final List<S3Xml.DeletedEntry> deleted = result.deleted().stream()
-                    .map(S3Xml.DeletedEntry::new).toList();
-            final List<S3Xml.DeleteErrorEntry> errors = result.errors().stream()
-                    .map(e -> new S3Xml.DeleteErrorEntry(e.key(), e.code(), e.message()))
-                    .toList();
-
-            if (deleteReq.quiet() && errors.isEmpty()) {
-                return HttpResponse.<String>ok()
-                        .contentType(MediaType.APPLICATION_XML)
-                        .body(S3Xml.deleteResult(List.of(), List.of()));
-            }
-            return HttpResponse.ok(S3Xml.deleteResult(deleted, errors))
-                    .contentType(MediaType.APPLICATION_XML);
-
-        } catch (final S3Exception ex) {
-            return s3Error(ex);
-        } catch (final Exception ex) {
-            LOG.error("DeleteObjects '{}' failed", bucket, ex);
-            return internalError();
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
-
-    /** Parses the optional CreateBucket body to extract LocationConstraint. */
     private static String parseLocationConstraint(final byte[] body) {
         if (body == null || body.length == 0) return null;
         try {

@@ -103,6 +103,8 @@ final class BucketMetadataTest {
                     null,
                     immutable,
                     null,
+                    null,
+                    null,
                     null
             );
         }
