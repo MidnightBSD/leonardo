@@ -39,6 +39,7 @@ public record ObjectMetadata(
         String aclCanned,
         boolean legalHold,
         RetentionConfig retention,
+        String versionId,          // null when versioning is Disabled/Suspended
         Map<String, String> checksums,
         Integer partsCount
 ) {
@@ -56,25 +57,31 @@ public record ObjectMetadata(
     public ObjectMetadata withTags(final Map<String, String> newTags) {
         return new ObjectMetadata(key, objectId, size, contentType, etag,
                 createdAt, lastModified, storageClass, versions, userMetadata,
-                newTags, aclCanned, legalHold, retention, checksums, partsCount);
+                newTags, aclCanned, legalHold, retention, versionId, checksums, partsCount);
     }
 
     public ObjectMetadata withAclCanned(final String newAclCanned) {
         return new ObjectMetadata(key, objectId, size, contentType, etag,
                 createdAt, lastModified, storageClass, versions, userMetadata,
-                tags, newAclCanned, legalHold, retention, checksums, partsCount);
+                tags, newAclCanned, legalHold, retention, versionId, checksums, partsCount);
     }
 
     public ObjectMetadata withLegalHold(final boolean newLegalHold) {
         return new ObjectMetadata(key, objectId, size, contentType, etag,
                 createdAt, lastModified, storageClass, versions, userMetadata,
-                tags, aclCanned, newLegalHold, retention, checksums, partsCount);
+                tags, aclCanned, newLegalHold, retention, versionId, checksums, partsCount);
     }
 
     public ObjectMetadata withRetention(final RetentionConfig newRetention) {
         return new ObjectMetadata(key, objectId, size, contentType, etag,
                 createdAt, lastModified, storageClass, versions, userMetadata,
-                tags, aclCanned, legalHold, newRetention, checksums, partsCount);
+                tags, aclCanned, legalHold, newRetention, versionId, checksums, partsCount);
+    }
+
+    public ObjectMetadata withVersionId(final String newVersionId) {
+        return new ObjectMetadata(key, objectId, size, contentType, etag,
+                createdAt, lastModified, storageClass, versions, userMetadata,
+                tags, aclCanned, legalHold, retention, newVersionId, checksums, partsCount);
     }
 
     /**

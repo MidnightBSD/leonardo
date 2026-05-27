@@ -88,11 +88,17 @@ public final class ObjectController {
     @Head
     public HttpResponse<?> headObject(
             @PathVariable final String bucket,
-            @PathVariable final String key) {
+            @PathVariable final String key,
+            @QueryValue(value = "versionId", defaultValue = "") final String versionId) {
         try {
-            final ObjectMetadata meta = objectService.headObject(bucket, key);
+            final ObjectMetadata meta = versionId.isEmpty()
+                    ? objectService.headObject(bucket, key)
+                    : objectService.headObjectVersion(bucket, key, versionId);
             final MutableHttpResponse<?> resp = objectHeaders(HttpResponse.ok(), meta);
             resp.header("Accept-Ranges", "bytes");
+            if (meta.versionId() != null) {
+                resp.header("x-amz-version-id", meta.versionId());
+            }
             return resp;
         } catch (final S3Exception ex) {
             // HEAD responses must have an empty body per HTTP spec
@@ -110,6 +116,7 @@ public final class ObjectController {
             @PathVariable final String bucket,
             @PathVariable final String key,
             @QueryValue(value = "uploadId", defaultValue = "") final String uploadId,
+            @QueryValue(value = "versionId", defaultValue = "") final String versionId,
             @Header(value = "x-amz-object-attributes", defaultValue = "") final String objectAttributes,
             @QueryValue(value = "part-number-marker", defaultValue = "0") final int partNumberMarker,
             @QueryValue(value = "max-parts", defaultValue = "1000") final int maxParts,
@@ -139,7 +146,9 @@ public final class ObjectController {
             return handleGetObjectRetention(bucket, key);
         }
         try {
-            final ObjectService.GetResult result = objectService.getObject(bucket, key);
+            final ObjectService.GetResult result = versionId.isEmpty()
+                    ? objectService.getObject(bucket, key)
+                    : objectService.getObjectVersion(bucket, key, versionId);
             final ObjectMetadata meta = result.meta();
 
             // Conditional request checks (RFC 7232 precedence order)
@@ -177,6 +186,9 @@ public final class ObjectController {
             response.contentType(meta.contentType());
             response.header("Content-Length", String.valueOf(data.length));
             response.header("Accept-Ranges", "bytes");
+            if (meta.versionId() != null) {
+                response.header("x-amz-version-id", meta.versionId());
+            }
             return response;
         } catch (final S3Exception ex) {
             return BucketController.s3Error(ex);
@@ -306,15 +318,19 @@ public final class ObjectController {
                 }
             });
 
-            final String etag = objectService.putObject(
+            final ObjectService.PutResult result = objectService.putObject(
                     bucket, key,
                     callerObjectId.isEmpty() ? null : callerObjectId,
                     contentType.isEmpty() ? null : contentType,
                     userMetadata.isEmpty() ? null : userMetadata,
                     requestChecksums.isEmpty() ? null : requestChecksums,
                     payload);
-            return HttpResponse.<String>ok()
-                    .header("ETag", "\"" + etag + "\"");
+            final MutableHttpResponse<String> putResp = HttpResponse.<String>ok()
+                    .header("ETag", "\"" + result.etag() + "\"");
+            if (result.versionId() != null) {
+                putResp.header("x-amz-version-id", result.versionId());
+            }
+            return putResp;
         } catch (final S3Exception ex) {
             return BucketController.s3Error(ex);
         } catch (final IOException ex) {
@@ -507,6 +523,9 @@ public final class ObjectController {
             @PathVariable final String bucket,
             @PathVariable final String key,
             @QueryValue(value = "uploadId", defaultValue = "") final String uploadId,
+            @QueryValue(value = "versionId", defaultValue = "") final String versionId,
+            @Header(value = "x-amz-bypass-governance-retention", defaultValue = "false")
+                final String bypassGovernanceHeader,
             final HttpRequest<?> request) {
         if (!uploadId.isEmpty()) {
             return handleAbortMultipartUpload(bucket, key, uploadId);
@@ -514,9 +533,21 @@ public final class ObjectController {
         if (request.getParameters().contains("tagging")) {
             return handleDeleteObjectTagging(bucket, key);
         }
+        final boolean bypass = "true".equalsIgnoreCase(bypassGovernanceHeader);
         try {
-            objectService.deleteObject(bucket, key);
-            return HttpResponse.<String>status(HttpStatus.NO_CONTENT);
+            if (!versionId.isEmpty()) {
+                objectService.deleteObjectVersion(bucket, key, versionId, bypass);
+                return HttpResponse.<String>status(HttpStatus.NO_CONTENT);
+            }
+            final ObjectService.DeleteObjectResult result =
+                    objectService.deleteObject(bucket, key, bypass);
+            final MutableHttpResponse<String> resp =
+                    HttpResponse.<String>status(HttpStatus.NO_CONTENT);
+            if (result.isDeleteMarker()) {
+                resp.header("x-amz-delete-marker", "true");
+                resp.header("x-amz-version-id", result.deleteMarkerVersionId());
+            }
+            return resp;
         } catch (final S3Exception ex) {
             return BucketController.s3Error(ex);
         } catch (final IOException ex) {

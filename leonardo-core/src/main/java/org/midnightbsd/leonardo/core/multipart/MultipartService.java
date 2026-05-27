@@ -260,7 +260,7 @@ public final class MultipartService {
                     key, objectId, totalSize, upload.contentType(), etag,
                     now, now, "STANDARD",
                     null, upload.userMetadata(), null, "private", false, null,
-                    null, ordered.size());
+                    null, null, ordered.size());
             metaStore.write(bucket, meta);
         } finally {
             objectLock.writeLock().unlock();

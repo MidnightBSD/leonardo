@@ -78,6 +78,40 @@ public final class ObjectMetadataStore {
         }
     }
 
+    /**
+     * Reads a specific version of an object. Returns the current metadata if the
+     * versionId matches, or reconstructs a partial ObjectMetadata from the version
+     * history. Returns empty when no match is found.
+     */
+    public Optional<ObjectMetadata> readVersion(
+            final String bucket,
+            final String key,
+            final String versionId) {
+        final Optional<ObjectMetadata> current = read(bucket, key);
+        if (current.isEmpty()) return Optional.empty();
+        final ObjectMetadata meta = current.get();
+
+        // Check if the request is for the current version
+        if (versionId == null || versionId.equals(meta.versionId())) {
+            return current;
+        }
+
+        // Search historical versions
+        if (meta.versions() == null) return Optional.empty();
+        for (final ObjectMetadata.ObjectVersion v : meta.versions()) {
+            if (versionId.equals(v.versionId())) {
+                final ObjectMetadata versioned = new ObjectMetadata(
+                        meta.key(), v.objectId(), v.size(), meta.contentType(),
+                        v.etag(), v.createdAt(), v.createdAt(), meta.storageClass(),
+                        null, meta.userMetadata(), meta.tags(), meta.aclCanned(),
+                        meta.legalHold(), meta.retention(), v.versionId(),
+                        meta.checksums(), meta.partsCount());
+                return Optional.of(versioned);
+            }
+        }
+        return Optional.empty();
+    }
+
     /** Deletes the object metadata file. Silently succeeds if it doesn't exist. */
     public void delete(final String bucket, final String key) throws IOException {
         Files.deleteIfExists(layout.objectMetaFile(bucket, key));
