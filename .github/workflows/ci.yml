@@ -108,8 +108,8 @@ jobs:
         shell: sh
         timeout-minutes: 30
         run: |
-          sudo mport config set mirror_region us
-          sudo mport install openjdk21-bin
+          sudo /usr/sbin/mport config set mirror_region us
+          sudo /usr/sbin/mport install openjdk21-bin
 
       - name: Build & test
         shell: sh
