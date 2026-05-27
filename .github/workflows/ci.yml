@@ -97,7 +97,9 @@ jobs:
           operating_system: midnightbsd
           version: '4.0.4'
           run: |
-            sudo mport install openjdk21-bin
+            sudo mount -t fdescfs fdesc /dev/fd
+            sudo mount -t procfs proc /proc
+            sudo mport install openjdk21-bin bash
             export JAVA_HOME=/usr/local/openjdk21
             export PATH=$JAVA_HOME/bin:$PATH
             ./gradlew --no-daemon -g .gradle build
