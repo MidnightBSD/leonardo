@@ -56,27 +56,18 @@ jobs:
       # No Gradle cache restore here — pre-populated Linux cache causes rsync
       # failures when cross-platform-actions syncs the workspace to the BSD VM.
 
-      - name: Setup FreeBSD VM
+      - name: Build & test on FreeBSD
         uses: cross-platform-actions/action@v1.1.0
         with:
           operating_system: freebsd
           version: '14.2'
           shell: sh
-
-      - name: Install JDK 21
-        shell: sh
-        timeout-minutes: 20
-        run: |
-          sudo /usr/sbin/pkg update -f
-          sudo /usr/sbin/pkg install -y openjdk21
-
-      - name: Build & test
-        shell: sh
-        timeout-minutes: 20
-        run: |
-          export JAVA_HOME=/usr/local/openjdk21
-          export PATH="$JAVA_HOME/bin:$PATH"
-          ./gradlew --no-daemon -g .gradle build
+          run: |
+            sudo /usr/sbin/pkg update -f
+            sudo /usr/sbin/pkg install -y openjdk21
+            export JAVA_HOME=/usr/local/openjdk21
+            export PATH="$JAVA_HOME/bin:$PATH"
+            ./gradlew --no-daemon -g .gradle build
 
       - name: Upload test reports
         if: always()
@@ -97,27 +88,18 @@ jobs:
       # No Gradle cache restore here — pre-populated Linux cache causes rsync
       # failures when cross-platform-actions syncs the workspace to the BSD VM.
 
-      - name: Setup MidnightBSD VM
+      - name: Build & test on MidnightBSD
         uses: cross-platform-actions/action@v1.1.0
         with:
           operating_system: midnightbsd
           version: '4.0.4'
           shell: sh
-
-      - name: Mount filesystems and install JDK 21
-        shell: sh
-        timeout-minutes: 30
-        run: |
-          sudo /usr/sbin/mport config set mirror_region us
-          sudo /usr/sbin/mport install openjdk21-bin
-
-      - name: Build & test
-        shell: sh
-        timeout-minutes: 20
-        run: |
-          export JAVA_HOME=/usr/local/openjdk21
-          export PATH="$JAVA_HOME/bin:$PATH"
-          ./gradlew --no-daemon -g .gradle build
+          run: |
+            sudo /usr/sbin/mport config set mirror_region us
+            sudo /usr/sbin/mport install openjdk21-bin
+            export JAVA_HOME=/usr/local/openjdk21
+            export PATH="$JAVA_HOME/bin:$PATH"
+            ./gradlew --no-daemon -g .gradle build
 
       - name: Upload test reports
         if: always()
