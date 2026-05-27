@@ -1,0 +1,61 @@
+/*
+ * Copyright 2026 The Leonardo Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.midnightbsd.leonardo.api.controller;
+
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+final class ObjectControllerRangeTest {
+
+    @Test
+    void parsesStartEnd() {
+        final long[] r = ObjectController.parseRange("bytes=0-1023", 5000);
+        assertThat(r).containsExactly(0, 1023);
+    }
+
+    @Test
+    void parsesOpenEnd() {
+        final long[] r = ObjectController.parseRange("bytes=500-", 5000);
+        assertThat(r).containsExactly(500, 4999);
+    }
+
+    @Test
+    void parsesSuffix() {
+        final long[] r = ObjectController.parseRange("bytes=-500", 5000);
+        assertThat(r).containsExactly(4500, 4999);
+    }
+
+    @Test
+    void clampsBeyondEnd() {
+        final long[] r = ObjectController.parseRange("bytes=0-9999", 5000);
+        assertThat(r).containsExactly(0, 4999);
+    }
+
+    @Test
+    void returnsNullForInvalidSyntax() {
+        assertThat(ObjectController.parseRange("invalid", 100)).isNull();
+        assertThat(ObjectController.parseRange("bytes=abc-def", 100)).isNull();
+    }
+
+    @Test
+    void returnsNullForUnsatisfiable() {
+        assertThat(ObjectController.parseRange("bytes=5000-6000", 5000)).isNull();
+        assertThat(ObjectController.parseRange("bytes=100-50", 5000)).isNull();
+    }
+
+    @Test
+    void returnsNullForNull() {
+        assertThat(ObjectController.parseRange(null, 100)).isNull();
+        assertThat(ObjectController.parseRange("", 100)).isNull();
+    }
+}

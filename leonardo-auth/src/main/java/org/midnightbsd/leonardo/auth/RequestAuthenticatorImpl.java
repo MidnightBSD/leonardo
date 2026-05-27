@@ -22,6 +22,10 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -57,6 +61,10 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
     // AWS AccessKeyId:Base64Signature
     private static final Pattern SIGV2 = Pattern.compile("AWS ([^:]+):(.+)");
 
+    // Parses X-Amz-Date format: 20260527T120000Z
+    private static final DateTimeFormatter AMZ_DATE_FMT =
+            DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
+
     // S3 sub-resources that are included in the SigV2 CanonicalizedResource
     private static final Set<String> SIGV2_SUB_RESOURCES = Set.of(
             "acl", "cors", "delete", "lifecycle", "location", "logging",
@@ -87,6 +95,11 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
         final String auth = firstHeader(headers, "authorization");
 
         if (auth == null || auth.isBlank()) {
+            // Check for SigV4 presigned URL (X-Amz-Signature in query string)
+            final Map<String, String> queryParams = parseQueryParams(uri.getRawQuery());
+            if (queryParams.containsKey("X-Amz-Signature")) {
+                return authenticatePresigned(method, uri, headers, queryParams);
+            }
             if (allowAnonymousRead && "GET".equalsIgnoreCase(method)) {
                 return Optional.of("anonymous");
             }
@@ -212,6 +225,125 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
             sb.append(name).append(':').append(joined).append('\n');
         }
         return sb.toString();
+    }
+
+    // -------------------------------------------------------------------------
+    // SigV4 presigned URL
+    // -------------------------------------------------------------------------
+
+    private Optional<String> authenticatePresigned(
+            final String method, final URI uri,
+            final Map<String, List<String>> headers,
+            final Map<String, String> queryParams) {
+
+        final String algorithm   = queryParams.get("X-Amz-Algorithm");
+        final String credential  = queryParams.get("X-Amz-Credential");
+        final String dateParam   = queryParams.get("X-Amz-Date");
+        final String expiresStr  = queryParams.get("X-Amz-Expires");
+        final String signedHdrs  = queryParams.get("X-Amz-SignedHeaders");
+        final String signature   = queryParams.get("X-Amz-Signature");
+
+        if (!"AWS4-HMAC-SHA256".equals(algorithm)
+                || credential == null || dateParam == null
+                || expiresStr == null || signedHdrs == null || signature == null) {
+            LOG.debug("Presigned URL: missing required params");
+            return Optional.empty();
+        }
+
+        // Validate expiry
+        try {
+            final Instant signingTime = Instant.from(AMZ_DATE_FMT.parse(dateParam));
+            final long expires = Long.parseLong(expiresStr);
+            if (Instant.now().isAfter(signingTime.plusSeconds(expires))) {
+                LOG.debug("Presigned URL: expired");
+                return Optional.empty();
+            }
+        } catch (final DateTimeParseException | NumberFormatException ex) {
+            LOG.debug("Presigned URL: bad date/expires: {}", ex.getMessage());
+            return Optional.empty();
+        }
+
+        // Parse credential: AKID/date/region/service/aws4_request
+        final String[] credParts = credential.split("/", -1);
+        if (credParts.length < 5) {
+            LOG.debug("Presigned URL: malformed credential '{}'", credential);
+            return Optional.empty();
+        }
+        final String accessKey = credParts[0];
+        final String date      = credParts[1];
+        final String region    = credParts[2];
+        final String service   = credParts[3];
+
+        // Build canonical request for presigned URL:
+        // payload hash is always UNSIGNED-PAYLOAD; query string excludes X-Amz-Signature
+        final String canonicalUri   = canonicalizeUri(uri.getRawPath());
+        final String canonicalQuery = canonicalizeRawQueryExcluding(
+                uri.getRawQuery(), "X-Amz-Signature");
+        final String canonicalHdrs  = buildCanonicalHeaders(headers, signedHdrs);
+
+        final String canonicalRequest = method.toUpperCase(Locale.ROOT) + "\n"
+                + canonicalUri + "\n"
+                + canonicalQuery + "\n"
+                + canonicalHdrs + "\n"
+                + signedHdrs + "\n"
+                + "UNSIGNED-PAYLOAD";
+
+        final String hashedCanonical = sha256Hex(canonicalRequest);
+        final String credentialScope = date + "/" + region + "/" + service + "/aws4_request";
+        final String stringToSign = "AWS4-HMAC-SHA256\n"
+                + dateParam + "\n"
+                + credentialScope + "\n"
+                + hashedCanonical;
+
+        final SigV4Verifier.SigV4Request req = new SigV4Verifier.SigV4Request(
+                accessKey, date, region, service, signedHdrs, signature, stringToSign);
+        final Optional<String> identity = sigV4Verifier.verify(req);
+        if (identity.isEmpty()) {
+            LOG.debug("Presigned URL: signature verification failed for accessKey={}", accessKey);
+        }
+        return identity;
+    }
+
+    /**
+     * Builds a canonical query string from the raw (already-percent-encoded)
+     * query string, excluding the named parameter. The raw values are used
+     * as-is (no double-encoding) because the signer already encoded them.
+     */
+    private static String canonicalizeRawQueryExcluding(
+            final String rawQuery, final String excludeKey) {
+        if (rawQuery == null || rawQuery.isEmpty()) return "";
+        final Map<String, List<String>> params = new TreeMap<>();
+        for (final String pair : rawQuery.split("&", -1)) {
+            final int eq = pair.indexOf('=');
+            final String key = eq < 0 ? pair : pair.substring(0, eq);
+            final String val = eq < 0 ? "" : pair.substring(eq + 1);
+            if (!key.equals(excludeKey)) {
+                params.computeIfAbsent(key, k -> new ArrayList<>()).add(val);
+            }
+        }
+        final StringJoiner sj = new StringJoiner("&");
+        params.forEach((k, vals) -> {
+            Collections.sort(vals);
+            vals.forEach(v -> sj.add(k + "=" + v));
+        });
+        return sj.toString();
+    }
+
+    /**
+     * Parses raw query string into a single-value map (first occurrence wins).
+     * Values are URL-decoded for easy comparison.
+     */
+    private static Map<String, String> parseQueryParams(final String rawQuery) {
+        if (rawQuery == null || rawQuery.isEmpty()) return Map.of();
+        final Map<String, String> result = new LinkedHashMap<>();
+        for (final String pair : rawQuery.split("&", -1)) {
+            final int eq = pair.indexOf('=');
+            final String key = eq < 0 ? pair : pair.substring(0, eq);
+            final String val = eq < 0 ? "" : java.net.URLDecoder.decode(
+                    pair.substring(eq + 1), StandardCharsets.UTF_8);
+            result.putIfAbsent(key, val);
+        }
+        return result;
     }
 
     // -------------------------------------------------------------------------

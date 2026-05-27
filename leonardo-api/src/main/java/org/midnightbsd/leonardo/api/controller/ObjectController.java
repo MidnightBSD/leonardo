@@ -41,8 +41,10 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.time.format.DateTimeFormatter;
+import java.time.Instant;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -89,9 +91,12 @@ public final class ObjectController {
             @PathVariable final String key) {
         try {
             final ObjectMetadata meta = objectService.headObject(bucket, key);
-            return objectHeaders(HttpResponse.ok(), meta);
+            final MutableHttpResponse<?> resp = objectHeaders(HttpResponse.ok(), meta);
+            resp.header("Accept-Ranges", "bytes");
+            return resp;
         } catch (final S3Exception ex) {
-            return BucketController.s3Error(ex);
+            // HEAD responses must have an empty body per HTTP spec
+            return HttpResponse.status(HttpStatus.valueOf(ex.getHttpStatus()));
         }
     }
 
@@ -108,6 +113,11 @@ public final class ObjectController {
             @Header(value = "x-amz-object-attributes", defaultValue = "") final String objectAttributes,
             @QueryValue(value = "part-number-marker", defaultValue = "0") final int partNumberMarker,
             @QueryValue(value = "max-parts", defaultValue = "1000") final int maxParts,
+            @Header(value = "range", defaultValue = "") final String rangeHeader,
+            @Header(value = "if-none-match", defaultValue = "") final String ifNoneMatch,
+            @Header(value = "if-match", defaultValue = "") final String ifMatch,
+            @Header(value = "if-modified-since", defaultValue = "") final String ifModifiedSince,
+            @Header(value = "if-unmodified-since", defaultValue = "") final String ifUnmodifiedSince,
             final HttpRequest<?> request) {
 
         if (!uploadId.isEmpty()) {
@@ -131,11 +141,42 @@ public final class ObjectController {
         try {
             final ObjectService.GetResult result = objectService.getObject(bucket, key);
             final ObjectMetadata meta = result.meta();
-            final MutableHttpResponse<byte[]> response =
-                    HttpResponse.ok(result.data());
+
+            // Conditional request checks (RFC 7232 precedence order)
+            final HttpResponse<?> conditional = checkConditionals(
+                    meta, ifMatch, ifNoneMatch, ifModifiedSince, ifUnmodifiedSince);
+            if (conditional != null) return conditional;
+
+            final byte[] data = result.data();
+            final MutableHttpResponse<byte[]> response;
+
+            // Range request support
+            if (!rangeHeader.isEmpty()) {
+                final long[] range = parseRange(rangeHeader, data.length);
+                if (range != null) {
+                    final int start = (int) range[0];
+                    final int end   = (int) range[1];
+                    final byte[] slice = java.util.Arrays.copyOfRange(data, start, end + 1);
+                    response = HttpResponse.status(HttpStatus.PARTIAL_CONTENT, "Partial Content")
+                            .body(slice);
+                    objectHeaders(response, meta);
+                    response.contentType(meta.contentType());
+                    response.header("Content-Range",
+                            "bytes " + start + "-" + end + "/" + data.length);
+                    response.header("Content-Length", String.valueOf(slice.length));
+                    response.header("Accept-Ranges", "bytes");
+                    return response;
+                }
+                // Invalid range → 416
+                return HttpResponse.<String>status(HttpStatus.valueOf(416))
+                        .header("Content-Range", "bytes */" + data.length);
+            }
+
+            response = HttpResponse.ok(data);
             objectHeaders(response, meta);
             response.contentType(meta.contentType());
-            response.header("Content-Length", String.valueOf(result.data().length));
+            response.header("Content-Length", String.valueOf(data.length));
+            response.header("Accept-Ranges", "bytes");
             return response;
         } catch (final S3Exception ex) {
             return BucketController.s3Error(ex);
@@ -205,6 +246,8 @@ public final class ObjectController {
             @Header(value = "x-amz-acl", defaultValue = "") final String cannedAcl,
             @Header(value = "x-amz-bypass-governance-retention", defaultValue = "false")
                 final String bypassGovernanceRetention,
+            @Header(value = "content-encoding", defaultValue = "") final String contentEncoding,
+            @Header(value = "x-amz-content-sha256", defaultValue = "") final String payloadHash,
             @Body final byte[] body,
             final HttpRequest<?> request) {
 
@@ -228,7 +271,8 @@ public final class ObjectController {
             if (!copySource.isEmpty()) {
                 return handleUploadPartCopy(bucket, key, uploadId, partNumber, copySource);
             }
-            return handleUploadPart(bucket, key, uploadId, partNumber, body);
+            return handleUploadPart(bucket, key, uploadId, partNumber, body,
+                    contentEncoding, payloadHash);
         }
 
         // CopyObject
@@ -236,8 +280,18 @@ public final class ObjectController {
             return handleCopyObject(bucket, key, copySource);
         }
 
-        // PutObject
-        final byte[] payload = body != null ? body : new byte[0];
+        // PutObject — decode aws-chunked framing if present (AWS CLI v2 default)
+        byte[] payload = body != null ? body : new byte[0];
+        if (AwsChunkedDecoder.isChunked(
+                contentEncoding.isEmpty() ? null : contentEncoding,
+                payloadHash.isEmpty() ? null : payloadHash)) {
+            try {
+                payload = AwsChunkedDecoder.decode(payload);
+            } catch (final IllegalArgumentException ex) {
+                return BucketController.s3Error(
+                        S3Xml.error("MalformedPOSTRequest", ex.getMessage(), null), 400);
+            }
+        }
 
         // Verify integrity checksums provided by the client
         try {
@@ -274,9 +328,16 @@ public final class ObjectController {
             final String key,
             final String uploadId,
             final int partNumber,
-            final byte[] data) {
+            final byte[] data,
+            final String contentEncoding,
+            final String payloadHash) {
         try {
-            final byte[] payload = data != null ? data : new byte[0];
+            byte[] payload = data != null ? data : new byte[0];
+            if (AwsChunkedDecoder.isChunked(
+                    contentEncoding.isEmpty() ? null : contentEncoding,
+                    payloadHash.isEmpty() ? null : payloadHash)) {
+                payload = AwsChunkedDecoder.decode(payload);
+            }
             final String etag = multipartService.uploadPart(bucket, key, uploadId, partNumber, payload);
             return HttpResponse.<String>ok()
                     .header("ETag", "\"" + etag + "\"");
@@ -665,6 +726,107 @@ public final class ObjectController {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Implements RFC 7232 conditional request semantics (If-Match / If-None-Match /
+     * If-Modified-Since / If-Unmodified-Since). Returns a short-circuit response
+     * (304 or 412) or {@code null} if the request should proceed normally.
+     */
+    private static HttpResponse<?> checkConditionals(
+            final ObjectMetadata meta,
+            final String ifMatch,
+            final String ifNoneMatch,
+            final String ifModifiedSince,
+            final String ifUnmodifiedSince) {
+
+        final String etag = meta.etag();
+        final Instant lastMod = meta.lastModified();
+
+        // If-Match: fail with 412 if ETag doesn't match
+        if (!ifMatch.isEmpty()) {
+            if (!etagMatches(etag, ifMatch)) {
+                return HttpResponse.status(HttpStatus.PRECONDITION_FAILED);
+            }
+        }
+
+        // If-Unmodified-Since: fail with 412 if modified after the given date
+        if (!ifUnmodifiedSince.isEmpty()) {
+            final Instant since = parseHttpDate(ifUnmodifiedSince);
+            if (since != null && lastMod != null && lastMod.isAfter(since)) {
+                return HttpResponse.status(HttpStatus.PRECONDITION_FAILED);
+            }
+        }
+
+        // If-None-Match: return 304 if ETag matches (cache hit)
+        if (!ifNoneMatch.isEmpty()) {
+            if (etagMatches(etag, ifNoneMatch)) {
+                return HttpResponse.notModified();
+            }
+        }
+
+        // If-Modified-Since: return 304 if not modified since date
+        if (!ifModifiedSince.isEmpty()) {
+            final Instant since = parseHttpDate(ifModifiedSince);
+            if (since != null && lastMod != null && !lastMod.isAfter(since)) {
+                return HttpResponse.notModified();
+            }
+        }
+
+        return null;
+    }
+
+    /** Returns true if {@code responseEtag} equals any of the ETags in the header value. */
+    private static boolean etagMatches(final String responseEtag, final String headerValue) {
+        if ("*".equals(headerValue.trim())) return responseEtag != null;
+        if (responseEtag == null) return false;
+        for (final String candidate : headerValue.split(",")) {
+            if (responseEtag.equalsIgnoreCase(candidate.trim())) return true;
+        }
+        return false;
+    }
+
+    private static Instant parseHttpDate(final String value) {
+        if (value == null || value.isEmpty()) return null;
+        try {
+            return Instant.from(RFC1123.parse(value));
+        } catch (final DateTimeParseException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * Parses a {@code Range: bytes=start-end} header value.
+     *
+     * @param rangeHeader the raw Range header value
+     * @param totalLength total number of bytes in the object
+     * @return {@code [start, end]} (inclusive, zero-based), or {@code null} if the range
+     *         is not satisfiable or the syntax is unrecognised
+     */
+    static long[] parseRange(final String rangeHeader, final long totalLength) {
+        if (rangeHeader == null || !rangeHeader.startsWith("bytes=")) return null;
+        final String spec = rangeHeader.substring("bytes=".length()).trim();
+        final int dash = spec.indexOf('-');
+        if (dash < 0) return null;
+        try {
+            final String startStr = spec.substring(0, dash).trim();
+            final String endStr   = spec.substring(dash + 1).trim();
+            long start, end;
+            if (startStr.isEmpty()) {
+                // Suffix range: bytes=-N (last N bytes)
+                final long suffix = Long.parseLong(endStr);
+                start = Math.max(0, totalLength - suffix);
+                end   = totalLength - 1;
+            } else {
+                start = Long.parseLong(startStr);
+                end   = endStr.isEmpty() ? totalLength - 1 : Long.parseLong(endStr);
+            }
+            if (start < 0 || start >= totalLength || end < start) return null;
+            end = Math.min(end, totalLength - 1);
+            return new long[]{start, end};
+        } catch (final NumberFormatException ex) {
+            return null;
+        }
+    }
 
     private static <T> MutableHttpResponse<T> objectHeaders(
             final MutableHttpResponse<T> response, final ObjectMetadata meta) {
