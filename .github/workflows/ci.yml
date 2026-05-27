@@ -67,8 +67,8 @@ jobs:
         shell: sh
         timeout-minutes: 20
         run: |
-          sudo pkg update -f
-          sudo pkg install -y openjdk21
+          sudo /usr/sbin/pkg update -f
+          sudo /usr/sbin/pkg install -y openjdk21
 
       - name: Build & test
         shell: sh
