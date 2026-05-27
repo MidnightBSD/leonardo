@@ -49,27 +49,33 @@ jobs:
   freebsd:
     name: build (FreeBSD 14.2)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: .gradle
-          key: freebsd-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: freebsd-gradle-
+      # No Gradle cache restore here — pre-populated Linux cache causes rsync
+      # failures when cross-platform-actions syncs the workspace to the BSD VM.
 
-      - name: Build & test
+      - name: Setup FreeBSD VM
         uses: cross-platform-actions/action@v1.1.0
         with:
           operating_system: freebsd
           version: '14.2'
-          run: |
-            sudo mount -t procfs proc /proc
-            sudo pkg install -y openjdk21 bash
-            export JAVA_HOME=/usr/local/openjdk21
-            export PATH=$JAVA_HOME/bin:$PATH
-            ./gradlew --no-daemon -g .gradle build
+          shell: sh
+
+      - name: Mount proc and install JDK 21
+        shell: sh
+        run: |
+          sudo mount -t procfs proc /proc
+          sudo pkg install -y openjdk21
+
+      - name: Build & test
+        shell: sh
+        timeout-minutes: 20
+        run: |
+          export JAVA_HOME=/usr/local/openjdk21
+          export PATH="$JAVA_HOME/bin:$PATH"
+          ./gradlew --no-daemon -g .gradle build
 
       - name: Upload test reports
         if: always()
@@ -78,33 +84,41 @@ jobs:
           name: test-reports-freebsd
           path: '**/build/reports/tests/**'
           retention-days: 7
+          if-no-files-found: ignore
 
   midnightbsd:
     name: build (MidnightBSD 4.0.4)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: .gradle
-          key: midnightbsd-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: midnightbsd-gradle-
+      # No Gradle cache restore here — pre-populated Linux cache causes rsync
+      # failures when cross-platform-actions syncs the workspace to the BSD VM.
 
-      - name: Build & test
+      - name: Setup MidnightBSD VM
         uses: cross-platform-actions/action@v1.1.0
         with:
           operating_system: midnightbsd
           version: '4.0.4'
-          run: |
-            sudo mount -t fdescfs fdesc /dev/fd
-            sudo mount -t procfs proc /proc
-            sudo mport config set mirror_region uk
-            sudo mport install openjdk21-bin bash
-            export JAVA_HOME=/usr/local/openjdk21
-            export PATH=$JAVA_HOME/bin:$PATH
-            /usr/local/bin/bash ./gradlew --no-daemon -g .gradle build
+          shell: sh
+
+      - name: Mount filesystems and install JDK 21
+        shell: sh
+        timeout-minutes: 30
+        run: |
+          sudo mount -t fdescfs fdesc /dev/fd
+          sudo mount -t procfs proc /proc
+          sudo mport config set mirror_region us
+          sudo mport install openjdk21-bin
+
+      - name: Build & test
+        shell: sh
+        timeout-minutes: 20
+        run: |
+          export JAVA_HOME=/usr/local/openjdk21
+          export PATH="$JAVA_HOME/bin:$PATH"
+          ./gradlew --no-daemon -g .gradle build
 
       - name: Upload test reports
         if: always()
@@ -113,3 +127,4 @@ jobs:
           name: test-reports-midnightbsd
           path: '**/build/reports/tests/**'
           retention-days: 7
+          if-no-files-found: ignore
