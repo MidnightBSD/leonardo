@@ -63,8 +63,8 @@ jobs:
           version: '14.2'
           shell: sh
           run: |
-            sudo /usr/sbin/pkg update -f
-            sudo /usr/sbin/pkg install -y openjdk21
+            sudo env IGNORE_OSVERSION=yes /usr/sbin/pkg update -f
+            sudo env IGNORE_OSVERSION=yes /usr/sbin/pkg install -y openjdk21
             export JAVA_HOME=/usr/local/openjdk21
             export PATH="$JAVA_HOME/bin:$PATH"
             ./gradlew --no-daemon -g .gradle build
