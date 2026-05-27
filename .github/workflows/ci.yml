@@ -66,7 +66,6 @@ jobs:
       - name: Mount proc and install JDK 21
         shell: sh
         run: |
-          sudo mount -t procfs proc /proc
           sudo pkg install -y openjdk21
 
       - name: Build & test
@@ -107,8 +106,6 @@ jobs:
         shell: sh
         timeout-minutes: 30
         run: |
-          sudo mount -t fdescfs fdesc /dev/fd
-          sudo mount -t procfs proc /proc
           sudo mport config set mirror_region us
           sudo mport install openjdk21-bin
 
