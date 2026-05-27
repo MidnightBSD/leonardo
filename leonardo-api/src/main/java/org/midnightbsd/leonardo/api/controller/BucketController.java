@@ -134,6 +134,9 @@ public final class BucketController {
         if (request.getParameters().contains("requestPayment")) {
             return putBucketRequestPayment(bucket, body);
         }
+        if (request.getParameters().contains("object-lock")) {
+            return putObjectLockConfiguration(bucket, body);
+        }
 
         // CreateBucket
         final String identity = request.getAttribute("s3.identity", String.class)
@@ -211,6 +214,7 @@ public final class BucketController {
             @QueryValue(value = "key-marker", defaultValue = "") final String keyMarker,
             @QueryValue(value = "upload-id-marker", defaultValue = "") final String uploadIdMarker,
             @QueryValue(value = "max-uploads", defaultValue = "1000") final int maxUploads,
+            @QueryValue(value = "version-id-marker", defaultValue = "") final String versionIdMarker,
             final HttpRequest<?> request) {
 
         // Sub-resource dispatching (query-param presence, no value needed)
@@ -250,6 +254,13 @@ public final class BucketController {
         }
         if (request.getParameters().contains("requestPayment")) {
             return getBucketRequestPayment(bucket);
+        }
+        if (request.getParameters().contains("versions")) {
+            return listObjectVersions(bucket, prefix, delimiter, maxKeys,
+                    keyMarker, versionIdMarker);
+        }
+        if (request.getParameters().contains("object-lock")) {
+            return getObjectLockConfiguration(bucket);
         }
 
         // ListObjectsV2 (list-type=2) or ListObjects v1
@@ -772,6 +783,90 @@ public final class BucketController {
                     .contentType(MediaType.APPLICATION_XML);
         } catch (final S3Exception ex) {
             return s3Error(ex);
+        }
+    }
+
+    // =========================================================================
+    // Phase 4 — object versioning + object-lock (bucket-level)
+    // =========================================================================
+
+    private HttpResponse<String> listObjectVersions(
+            final String bucket,
+            final String prefix,
+            final String delimiter,
+            final int maxKeys,
+            final String keyMarker,
+            final String versionIdMarker) {
+        try {
+            bucketService.headBucket(bucket);
+            final String owner = bucketService.getBucketMetadata(bucket).owner();
+            final ObjectMetadataStore.ListVersionsPage page = objectService.listObjectVersions(
+                    bucket,
+                    prefix.isEmpty()          ? null : prefix,
+                    delimiter.isEmpty()       ? null : delimiter,
+                    maxKeys,
+                    keyMarker.isEmpty()       ? null : keyMarker,
+                    versionIdMarker.isEmpty() ? null : versionIdMarker);
+
+            final List<S3Xml.VersionListEntry> entries = page.versions().stream()
+                    .map(v -> new S3Xml.VersionListEntry(
+                            v.key(), v.versionId(), v.etag(), v.size(),
+                            v.deleteMarker(), v.isLatest(), v.lastModified(), v.storageClass()))
+                    .toList();
+
+            final String xml = S3Xml.listObjectVersions(
+                    bucket,
+                    prefix.isEmpty()          ? null : prefix,
+                    delimiter.isEmpty()       ? null : delimiter,
+                    maxKeys,
+                    keyMarker.isEmpty()       ? null : keyMarker,
+                    versionIdMarker.isEmpty() ? null : versionIdMarker,
+                    page.truncated(),
+                    page.nextKeyMarker(),
+                    page.nextVersionIdMarker(),
+                    owner != null ? owner : "",
+                    entries,
+                    page.commonPrefixes());
+            return HttpResponse.ok(xml).contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IOException ex) {
+            LOG.error("ListObjectVersions '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> getObjectLockConfiguration(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            final BucketMetadata.ObjectLockConfig olc = meta.objectLock();
+            if (olc == null) {
+                return s3Error(S3Xml.error("ObjectLockConfigurationNotFoundError",
+                        "Object Lock configuration does not exist for this bucket.", null), 404);
+            }
+            return HttpResponse.ok(S3Xml.getObjectLockConfiguration(
+                    olc.enabled(), olc.defaultRetentionMode(),
+                    olc.defaultRetentionDays(), olc.defaultRetentionYears()))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> putObjectLockConfiguration(
+            final String bucket, final byte[] body) {
+        try {
+            final BucketMetadata.ObjectLockConfig olc =
+                    ObjectConfigParser.parseObjectLockConfiguration(body);
+            bucketService.updateBucket(bucket, meta -> meta.withObjectLock(olc));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutObjectLockConfiguration '{}' failed", bucket, ex);
+            return internalError();
         }
     }
 

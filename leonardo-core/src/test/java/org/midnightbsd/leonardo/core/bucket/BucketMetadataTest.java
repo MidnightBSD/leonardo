@@ -32,7 +32,7 @@ final class BucketMetadataTest {
     void immutableAndObjectLockTogetherRejected() {
         final BucketMetadata bucket = baseBuilder()
                 .immutable(true)
-                .objectLock(new ObjectLockConfig(true))
+                .objectLock(new ObjectLockConfig(true, null, null, null))
                 .build();
 
         assertThatThrownBy(bucket::validateInvariants)
@@ -77,7 +77,7 @@ final class BucketMetadataTest {
     private static final class Builder {
         private boolean immutable = false;
         private VersioningConfig versioning = new VersioningConfig(VersioningStatus.DISABLED, false);
-        private ObjectLockConfig objectLock = new ObjectLockConfig(false);
+        private ObjectLockConfig objectLock = new ObjectLockConfig(false, null, null, null);
 
         Builder immutable(final boolean v) { this.immutable = v; return this; }
         Builder versioning(final VersioningConfig v) { this.versioning = v; return this; }

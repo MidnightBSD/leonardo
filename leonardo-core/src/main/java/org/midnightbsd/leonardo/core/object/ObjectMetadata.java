@@ -53,6 +53,30 @@ public record ObjectMetadata(
 
     public record RetentionConfig(String mode, Instant retainUntilDate) {}
 
+    public ObjectMetadata withTags(final Map<String, String> newTags) {
+        return new ObjectMetadata(key, objectId, size, contentType, etag,
+                createdAt, lastModified, storageClass, versions, userMetadata,
+                newTags, aclCanned, legalHold, retention, checksums, partsCount);
+    }
+
+    public ObjectMetadata withAclCanned(final String newAclCanned) {
+        return new ObjectMetadata(key, objectId, size, contentType, etag,
+                createdAt, lastModified, storageClass, versions, userMetadata,
+                tags, newAclCanned, legalHold, retention, checksums, partsCount);
+    }
+
+    public ObjectMetadata withLegalHold(final boolean newLegalHold) {
+        return new ObjectMetadata(key, objectId, size, contentType, etag,
+                createdAt, lastModified, storageClass, versions, userMetadata,
+                tags, aclCanned, newLegalHold, retention, checksums, partsCount);
+    }
+
+    public ObjectMetadata withRetention(final RetentionConfig newRetention) {
+        return new ObjectMetadata(key, objectId, size, contentType, etag,
+                createdAt, lastModified, storageClass, versions, userMetadata,
+                tags, aclCanned, legalHold, newRetention, checksums, partsCount);
+    }
+
     /**
      * Regex governing caller-supplied object IDs (§6 of the plan).
      * Rejects {@code ..}, leading {@code .}, slashes, NULs, and anything else

@@ -116,6 +116,18 @@ public final class ObjectController {
         if (!objectAttributes.isEmpty() || request.getParameters().contains("attributes")) {
             return handleGetObjectAttributes(bucket, key);
         }
+        if (request.getParameters().contains("acl")) {
+            return handleGetObjectAcl(bucket, key);
+        }
+        if (request.getParameters().contains("tagging")) {
+            return handleGetObjectTagging(bucket, key);
+        }
+        if (request.getParameters().contains("legal-hold")) {
+            return handleGetObjectLegalHold(bucket, key);
+        }
+        if (request.getParameters().contains("retention")) {
+            return handleGetObjectRetention(bucket, key);
+        }
         try {
             final ObjectService.GetResult result = objectService.getObject(bucket, key);
             final ObjectMetadata meta = result.meta();
@@ -190,8 +202,26 @@ public final class ObjectController {
             @Header(value = CALLER_OBJECT_ID_HEADER, defaultValue = "") final String callerObjectId,
             @Header(value = "content-type", defaultValue = "") final String contentType,
             @Header(value = "content-md5", defaultValue = "") final String contentMd5,
+            @Header(value = "x-amz-acl", defaultValue = "") final String cannedAcl,
+            @Header(value = "x-amz-bypass-governance-retention", defaultValue = "false")
+                final String bypassGovernanceRetention,
             @Body final byte[] body,
             final HttpRequest<?> request) {
+
+        // Sub-resource dispatches before UploadPart check
+        if (request.getParameters().contains("acl")) {
+            return handlePutObjectAcl(bucket, key, body, cannedAcl);
+        }
+        if (request.getParameters().contains("tagging")) {
+            return handlePutObjectTagging(bucket, key, body);
+        }
+        if (request.getParameters().contains("legal-hold")) {
+            return handlePutObjectLegalHold(bucket, key, body);
+        }
+        if (request.getParameters().contains("retention")) {
+            return handlePutObjectRetention(bucket, key, body,
+                    "true".equalsIgnoreCase(bypassGovernanceRetention));
+        }
 
         // UploadPart or UploadPartCopy
         if (!uploadId.isEmpty() && partNumber > 0) {
@@ -338,6 +368,12 @@ public final class ObjectController {
         if (!uploadId.isEmpty()) {
             return handleCompleteMultipartUpload(bucket, key, uploadId, body);
         }
+        if (request.getParameters().contains("restore")) {
+            return handleRestoreObject(bucket, key);
+        }
+        if (request.getParameters().contains("rename")) {
+            return handleRenameObject(bucket, key, request);
+        }
         return BucketController.s3Error(S3Xml.error("MethodNotAllowed",
                 "The specified method is not allowed against this resource.", null), 405);
     }
@@ -409,9 +445,13 @@ public final class ObjectController {
     public HttpResponse<String> deleteObject(
             @PathVariable final String bucket,
             @PathVariable final String key,
-            @QueryValue(value = "uploadId", defaultValue = "") final String uploadId) {
+            @QueryValue(value = "uploadId", defaultValue = "") final String uploadId,
+            final HttpRequest<?> request) {
         if (!uploadId.isEmpty()) {
             return handleAbortMultipartUpload(bucket, key, uploadId);
+        }
+        if (request.getParameters().contains("tagging")) {
+            return handleDeleteObjectTagging(bucket, key);
         }
         try {
             objectService.deleteObject(bucket, key);
@@ -433,6 +473,191 @@ public final class ObjectController {
             return BucketController.s3Error(ex);
         } catch (final IOException ex) {
             LOG.error("AbortMultipartUpload '{}/{}' uploadId='{}' failed", bucket, key, uploadId, ex);
+            return BucketController.internalError();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 4+5 — object configuration GET handlers
+    // -------------------------------------------------------------------------
+
+    private HttpResponse<String> handleGetObjectAcl(final String bucket, final String key) {
+        try {
+            final ObjectMetadata meta = objectService.headObject(bucket, key);
+            final String canned = meta.aclCanned() != null ? meta.aclCanned() : "private";
+            return HttpResponse.ok(S3Xml.getObjectAcl(null, canned, null))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return BucketController.s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> handleGetObjectTagging(final String bucket, final String key) {
+        try {
+            final ObjectMetadata meta = objectService.headObject(bucket, key);
+            return HttpResponse.ok(S3Xml.getObjectTagging(meta.tags()))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return BucketController.s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> handleGetObjectLegalHold(final String bucket, final String key) {
+        try {
+            final ObjectMetadata meta = objectService.headObject(bucket, key);
+            return HttpResponse.ok(S3Xml.getObjectLegalHold(meta.legalHold()))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return BucketController.s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> handleGetObjectRetention(final String bucket, final String key) {
+        try {
+            final ObjectMetadata meta = objectService.headObject(bucket, key);
+            if (meta.retention() == null) {
+                return BucketController.s3Error(
+                        S3Xml.error("NoSuchObjectLockConfiguration",
+                                "The specified object does not have a ObjectLock configuration.", null),
+                        404);
+            }
+            return HttpResponse.ok(S3Xml.getObjectRetention(
+                    meta.retention().mode(), meta.retention().retainUntilDate()))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return BucketController.s3Error(ex);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 4+5 — object configuration PUT handlers
+    // -------------------------------------------------------------------------
+
+    private HttpResponse<String> handlePutObjectAcl(
+            final String bucket, final String key,
+            final byte[] body, final String cannedAcl) {
+        try {
+            final String acl = ObjectConfigParser.parseObjectAcl(body, cannedAcl);
+            objectService.updateObject(bucket, key, meta -> meta.withAclCanned(acl));
+            return HttpResponse.<String>ok();
+        } catch (final S3Exception ex) {
+            return BucketController.s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return BucketController.s3Error(
+                    S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutObjectAcl '{}/{}' failed", bucket, key, ex);
+            return BucketController.internalError();
+        }
+    }
+
+    private HttpResponse<String> handlePutObjectTagging(
+            final String bucket, final String key, final byte[] body) {
+        try {
+            final Map<String, String> tags = ObjectConfigParser.parseObjectTagging(body);
+            objectService.updateObject(bucket, key,
+                    meta -> meta.withTags(tags.isEmpty() ? null : tags));
+            return HttpResponse.<String>ok();
+        } catch (final S3Exception ex) {
+            return BucketController.s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return BucketController.s3Error(
+                    S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutObjectTagging '{}/{}' failed", bucket, key, ex);
+            return BucketController.internalError();
+        }
+    }
+
+    private HttpResponse<String> handlePutObjectLegalHold(
+            final String bucket, final String key, final byte[] body) {
+        try {
+            final boolean hold = ObjectConfigParser.parseObjectLegalHold(body);
+            objectService.updateObject(bucket, key, meta -> meta.withLegalHold(hold));
+            return HttpResponse.<String>ok();
+        } catch (final S3Exception ex) {
+            return BucketController.s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return BucketController.s3Error(
+                    S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutObjectLegalHold '{}/{}' failed", bucket, key, ex);
+            return BucketController.internalError();
+        }
+    }
+
+    private HttpResponse<String> handlePutObjectRetention(
+            final String bucket, final String key,
+            final byte[] body, final boolean bypassGovernance) {
+        try {
+            final ObjectMetadata.RetentionConfig retention =
+                    ObjectConfigParser.parseObjectRetention(body);
+            objectService.updateObject(bucket, key, meta -> {
+                if (!bypassGovernance
+                        && meta.retention() != null
+                        && "COMPLIANCE".equals(meta.retention().mode())) {
+                    throw new S3Exception("AccessDenied",
+                            "Access Denied: COMPLIANCE retention cannot be shortened.", 403);
+                }
+                return meta.withRetention(retention);
+            });
+            return HttpResponse.<String>ok();
+        } catch (final S3Exception ex) {
+            return BucketController.s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return BucketController.s3Error(
+                    S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutObjectRetention '{}/{}' failed", bucket, key, ex);
+            return BucketController.internalError();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 4+5 — object tagging DELETE
+    // -------------------------------------------------------------------------
+
+    private HttpResponse<String> handleDeleteObjectTagging(final String bucket, final String key) {
+        try {
+            objectService.updateObject(bucket, key, meta -> meta.withTags(null));
+            return HttpResponse.<String>status(HttpStatus.NO_CONTENT);
+        } catch (final S3Exception ex) {
+            return BucketController.s3Error(ex);
+        } catch (final IOException ex) {
+            LOG.error("DeleteObjectTagging '{}/{}' failed", bucket, key, ex);
+            return BucketController.internalError();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 5 — RestoreObject + RenameObject
+    // -------------------------------------------------------------------------
+
+    private HttpResponse<String> handleRestoreObject(final String bucket, final String key) {
+        try {
+            objectService.headObject(bucket, key); // 404 if not found
+            // Leonardo uses local storage only; all objects are immediately accessible.
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return BucketController.s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> handleRenameObject(
+            final String bucket, final String key, final HttpRequest<?> request) {
+        final String srcKey = request.getHeaders()
+                .get("x-amz-rename-source-key");
+        if (srcKey == null || srcKey.isEmpty()) {
+            return BucketController.s3Error(S3Xml.error("InvalidArgument",
+                    "x-amz-rename-source-key header is required for rename.", null), 400);
+        }
+        try {
+            objectService.renameObject(bucket, srcKey, key);
+            return HttpResponse.<String>ok();
+        } catch (final S3Exception ex) {
+            return BucketController.s3Error(ex);
+        } catch (final IOException ex) {
+            LOG.error("RenameObject '{}/{}' → '{}' failed", bucket, srcKey, key, ex);
             return BucketController.internalError();
         }
     }

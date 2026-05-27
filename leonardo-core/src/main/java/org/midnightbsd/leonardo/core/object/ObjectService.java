@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.function.UnaryOperator;
 
 /**
  * Business logic for object operations: PutObject, GetObject, HeadObject,
@@ -220,6 +221,101 @@ public final class ObjectService {
         }
 
         return etag;
+    }
+
+    // -------------------------------------------------------------------------
+    // UpdateObject (generic metadata update)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Applies {@code updater} to the object's current metadata and writes the
+     * result atomically under the per-key write lock.
+     *
+     * @throws S3Exception if the bucket or key does not exist
+     */
+    public ObjectMetadata updateObject(
+            final String bucket,
+            final String key,
+            final UnaryOperator<ObjectMetadata> updater) throws IOException {
+        ensureBucketExists(bucket);
+        final var lock = locks.lockFor(bucket + "/" + key);
+        lock.writeLock().lock();
+        try {
+            final ObjectMetadata current = metaStore.read(bucket, key)
+                    .orElseThrow(() -> S3Exception.noSuchKey(key));
+            final ObjectMetadata updated = updater.apply(current);
+            metaStore.write(bucket, updated);
+            return updated;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // RenameObject
+    // -------------------------------------------------------------------------
+
+    /**
+     * Renames {@code srcKey} to {@code dstKey} within the same bucket by
+     * rewriting the metadata file — the payload file is shared and not moved.
+     *
+     * @throws S3Exception if the source key doesn't exist or the destination already exists
+     */
+    public void renameObject(
+            final String bucket,
+            final String srcKey,
+            final String dstKey) throws IOException {
+        ensureBucketExists(bucket);
+        // Acquire both locks in canonical order to prevent deadlock
+        final String lockKeyA = srcKey.compareTo(dstKey) <= 0
+                ? bucket + "/" + srcKey : bucket + "/" + dstKey;
+        final String lockKeyB = srcKey.compareTo(dstKey) <= 0
+                ? bucket + "/" + dstKey : bucket + "/" + srcKey;
+        final var la = locks.lockFor(lockKeyA);
+        final var lb = locks.lockFor(lockKeyB);
+        la.writeLock().lock();
+        try {
+            lb.writeLock().lock();
+            try {
+                final ObjectMetadata srcMeta = metaStore.read(bucket, srcKey)
+                        .orElseThrow(() -> S3Exception.noSuchKey(srcKey));
+                if (metaStore.exists(bucket, dstKey)) {
+                    throw new S3Exception("KeyAlreadyExists",
+                            "The destination key already exists: " + dstKey, 409);
+                }
+                final Instant now = Instant.now();
+                final ObjectMetadata dstMeta = new ObjectMetadata(
+                        dstKey, srcMeta.objectId(), srcMeta.size(),
+                        srcMeta.contentType(), srcMeta.etag(),
+                        srcMeta.createdAt(), now, srcMeta.storageClass(),
+                        srcMeta.versions(), srcMeta.userMetadata(), srcMeta.tags(),
+                        srcMeta.aclCanned(), srcMeta.legalHold(), srcMeta.retention(),
+                        srcMeta.checksums(), srcMeta.partsCount());
+                metaStore.write(bucket, dstMeta);
+                metaStore.delete(bucket, srcKey);
+            } finally {
+                lb.writeLock().unlock();
+            }
+        } finally {
+            la.writeLock().unlock();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // ListObjectVersions
+    // -------------------------------------------------------------------------
+
+    /** Delegates to the metadata store's version listing. */
+    public ObjectMetadataStore.ListVersionsPage listObjectVersions(
+            final String bucket,
+            final String prefix,
+            final String delimiter,
+            final int maxKeys,
+            final String keyMarker,
+            final String versionIdMarker) throws IOException {
+        ensureBucketExists(bucket);
+        return metaStore.listVersions(bucket, prefix, delimiter, maxKeys,
+                keyMarker, versionIdMarker);
     }
 
     // -------------------------------------------------------------------------

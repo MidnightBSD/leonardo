@@ -24,6 +24,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
@@ -169,4 +170,110 @@ public final class ObjectMetadataStore {
             List<String> commonPrefixes,
             boolean truncated,
             String nextKey) {}
+
+    public record VersionEntry(
+            String key,
+            String versionId,
+            String etag,
+            long size,
+            boolean deleteMarker,
+            boolean isLatest,
+            Instant lastModified,
+            String storageClass) {}
+
+    public record ListVersionsPage(
+            List<VersionEntry> versions,
+            List<String> commonPrefixes,
+            boolean truncated,
+            String nextKeyMarker,
+            String nextVersionIdMarker) {}
+
+    /**
+     * Lists all versions of all objects in a bucket.  The current metadata is
+     * the "latest" version; historical entries in {@link ObjectMetadata#versions()}
+     * are emitted as older versions.
+     */
+    public ListVersionsPage listVersions(
+            final String bucket,
+            final String prefix,
+            final String delimiter,
+            final int maxKeys,
+            final String keyMarker,
+            final String versionIdMarker) throws IOException {
+
+        final Path objectsDir = layout.bucketObjectsMetaDir(bucket);
+        final var all = new ArrayList<ObjectMetadata>();
+
+        if (Files.exists(objectsDir)) {
+            try (DirectoryStream<Path> ds = Files.newDirectoryStream(objectsDir, "*.yaml")) {
+                for (final Path p : ds) {
+                    try {
+                        all.add(yaml.readValue(p.toFile(), ObjectMetadata.class));
+                    } catch (final IOException ex) {
+                        LOG.warn("Skipping unreadable object metadata '{}': {}", p, ex.getMessage());
+                    }
+                }
+            }
+        }
+
+        all.sort(Comparator.comparing(ObjectMetadata::key));
+
+        final int limit = maxKeys > 0 ? Math.min(maxKeys, DEFAULT_MAX_KEYS) : DEFAULT_MAX_KEYS;
+        final var versions = new ArrayList<VersionEntry>();
+        final var commonPrefixes = new java.util.TreeSet<String>();
+        boolean truncated = false;
+        String nextKeyMarkerResult = null;
+        String nextVersionIdResult = null;
+
+        outer:
+        for (final ObjectMetadata meta : all) {
+            final String key = meta.key();
+
+            if (keyMarker != null && !keyMarker.isEmpty() && key.compareTo(keyMarker) <= 0) {
+                continue;
+            }
+            if (prefix != null && !prefix.isEmpty() && !key.startsWith(prefix)) {
+                continue;
+            }
+
+            if (delimiter != null && !delimiter.isEmpty()) {
+                final String afterPrefix = prefix != null ? key.substring(prefix.length()) : key;
+                final int delimIdx = afterPrefix.indexOf(delimiter);
+                if (delimIdx >= 0) {
+                    commonPrefixes.add((prefix != null ? prefix : "")
+                            + afterPrefix.substring(0, delimIdx + delimiter.length()));
+                    continue;
+                }
+            }
+
+            // Current (latest) version
+            if (versions.size() >= limit) {
+                truncated = true;
+                nextKeyMarkerResult = key;
+                break;
+            }
+            versions.add(new VersionEntry(key, null, meta.etag(), meta.size(),
+                    false, true, meta.lastModified(),
+                    meta.storageClass() != null ? meta.storageClass() : "STANDARD"));
+
+            // Historical versions (oldest first within the same key)
+            if (meta.versions() != null) {
+                final var hist = new ArrayList<>(meta.versions());
+                hist.sort(Comparator.comparing(ObjectMetadata.ObjectVersion::createdAt).reversed());
+                for (final ObjectMetadata.ObjectVersion v : hist) {
+                    if (versions.size() >= limit) {
+                        truncated = true;
+                        nextKeyMarkerResult = key;
+                        nextVersionIdResult = v.versionId();
+                        break outer;
+                    }
+                    versions.add(new VersionEntry(key, v.versionId(), v.etag(), v.size(),
+                            v.deleteMarker(), false, v.createdAt(), "STANDARD"));
+                }
+            }
+        }
+
+        return new ListVersionsPage(versions, new ArrayList<>(commonPrefixes),
+                truncated, nextKeyMarkerResult, nextVersionIdResult);
+    }
 }

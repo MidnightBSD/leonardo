@@ -85,7 +85,11 @@ public record BucketMetadata(
             Integer maxAgeSeconds) {}
     public record WebsiteConfig(boolean enabled, String indexDocument, String errorDocument) {}
     public record EncryptionConfig(String defaultAlgorithm) {}   // none | AES256
-    public record ObjectLockConfig(boolean enabled) {}
+    public record ObjectLockConfig(
+            boolean enabled,
+            String defaultRetentionMode,   // GOVERNANCE | COMPLIANCE | null
+            Integer defaultRetentionDays,
+            Integer defaultRetentionYears) {}
     public record PublicAccessBlockConfig(
             boolean blockPublicAcls,
             boolean ignorePublicAcls,
@@ -162,6 +166,13 @@ public record BucketMetadata(
                 lifecycle, cors, website, encryption, objectLock, policyJson,
                 callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
                 rateLimit, publicAccessBlock, newRequestPayer);
+    }
+
+    public BucketMetadata withObjectLock(final ObjectLockConfig newObjectLock) {
+        return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
+                lifecycle, cors, website, encryption, newObjectLock, policyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, publicAccessBlock, requestPayer);
     }
 
     /**

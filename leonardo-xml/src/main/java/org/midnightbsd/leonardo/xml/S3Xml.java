@@ -351,6 +351,120 @@ public final class S3Xml {
     }
 
     // -------------------------------------------------------------------------
+    // Phase 4 — object configuration GET responses
+    // -------------------------------------------------------------------------
+
+    /** Response body for GetObjectAcl — same structure as GetBucketAcl. */
+    public static String getObjectAcl(
+            final String owner,
+            final String canned,
+            final List<GrantEntry> grants) {
+        return getBucketAcl(owner, canned, grants);
+    }
+
+    /** Response body for GetObjectTagging — same structure as GetBucketTagging. */
+    public static String getObjectTagging(final Map<String, String> tags) {
+        return getBucketTagging(tags);
+    }
+
+    public record VersionListEntry(
+            String key,
+            String versionId,
+            String etag,
+            long size,
+            boolean deleteMarker,
+            boolean isLatest,
+            Instant lastModified,
+            String storageClass) {}
+
+    /** Response body for ListObjectVersions. */
+    public static String listObjectVersions(
+            final String bucket,
+            final String prefix,
+            final String delimiter,
+            final int maxKeys,
+            final String keyMarker,
+            final String versionIdMarker,
+            final boolean truncated,
+            final String nextKeyMarker,
+            final String nextVersionIdMarker,
+            final String owner,
+            final List<VersionListEntry> versions,
+            final List<String> commonPrefixes) {
+
+        final var sb = new StringBuilder(PREAMBLE);
+        sb.append("<ListVersionsResult").append(NS).append(">");
+        sb.append(t("Name", bucket));
+        sb.append(t("Prefix",         prefix         != null ? prefix         : ""));
+        sb.append(t("KeyMarker",      keyMarker      != null ? keyMarker      : ""));
+        sb.append(t("VersionIdMarker",versionIdMarker != null ? versionIdMarker : ""));
+        sb.append(t("MaxKeys",        String.valueOf(maxKeys)));
+        sb.append(t("IsTruncated",    String.valueOf(truncated)));
+        if (delimiter != null && !delimiter.isEmpty()) sb.append(t("Delimiter", delimiter));
+        if (truncated) {
+            if (nextKeyMarker       != null) sb.append(t("NextKeyMarker",       nextKeyMarker));
+            if (nextVersionIdMarker != null) sb.append(t("NextVersionIdMarker", nextVersionIdMarker));
+        }
+        for (final VersionListEntry v : versions) {
+            final String tag = v.deleteMarker() ? "DeleteMarker" : "Version";
+            sb.append("<").append(tag).append(">");
+            sb.append(t("Key", v.key()));
+            if (v.versionId() != null) sb.append(t("VersionId", v.versionId()));
+            sb.append(t("IsLatest",     String.valueOf(v.isLatest())));
+            sb.append(t("LastModified", ISO.format(v.lastModified())));
+            if (!v.deleteMarker()) {
+                sb.append(t("ETag",         v.etag()));
+                sb.append(t("Size",         String.valueOf(v.size())));
+                sb.append(t("StorageClass", v.storageClass() != null ? v.storageClass() : "STANDARD"));
+            }
+            sb.append("<Owner>").append(t("ID", owner)).append(t("DisplayName", owner)).append("</Owner>");
+            sb.append("</").append(tag).append(">");
+        }
+        for (final String cp : commonPrefixes) {
+            sb.append("<CommonPrefixes>").append(t("Prefix", cp)).append("</CommonPrefixes>");
+        }
+        sb.append("</ListVersionsResult>");
+        return sb.toString();
+    }
+
+    /** Response body for GetObjectLockConfiguration. */
+    public static String getObjectLockConfiguration(
+            final boolean enabled,
+            final String defaultRetentionMode,
+            final Integer defaultRetentionDays,
+            final Integer defaultRetentionYears) {
+        final var sb = new StringBuilder(PREAMBLE);
+        sb.append("<ObjectLockConfiguration").append(NS).append(">");
+        sb.append(t("ObjectLockEnabled", enabled ? "Enabled" : "Disabled"));
+        if (defaultRetentionMode != null) {
+            sb.append("<Rule><DefaultRetention>");
+            sb.append(t("Mode", defaultRetentionMode));
+            if (defaultRetentionDays  != null) sb.append(t("Days",  String.valueOf(defaultRetentionDays)));
+            if (defaultRetentionYears != null) sb.append(t("Years", String.valueOf(defaultRetentionYears)));
+            sb.append("</DefaultRetention></Rule>");
+        }
+        sb.append("</ObjectLockConfiguration>");
+        return sb.toString();
+    }
+
+    /** Response body for GetObjectRetention. */
+    public static String getObjectRetention(final String mode, final Instant retainUntilDate) {
+        final var sb = new StringBuilder(PREAMBLE);
+        sb.append("<Retention").append(NS).append(">");
+        if (mode != null) sb.append(t("Mode", mode));
+        if (retainUntilDate != null) sb.append(t("RetainUntilDate", ISO.format(retainUntilDate)));
+        sb.append("</Retention>");
+        return sb.toString();
+    }
+
+    /** Response body for GetObjectLegalHold. */
+    public static String getObjectLegalHold(final boolean legalHold) {
+        return PREAMBLE + "<LegalHold" + NS + ">"
+                + t("Status", legalHold ? "ON" : "OFF")
+                + "</LegalHold>";
+    }
+
+    // -------------------------------------------------------------------------
     // Multipart upload operations
     // -------------------------------------------------------------------------
 
