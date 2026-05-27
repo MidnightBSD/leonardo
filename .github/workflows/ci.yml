@@ -47,7 +47,7 @@ jobs:
           retention-days: 7
 
   freebsd:
-    name: build (FreeBSD 14.2)
+    name: build (FreeBSD 14.4)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -60,11 +60,11 @@ jobs:
         uses: cross-platform-actions/action@v1.1.0
         with:
           operating_system: freebsd
-          version: '14.2'
+          version: '14.4'
           shell: sh
           run: |
-            sudo env IGNORE_OSVERSION=yes /usr/sbin/pkg update -f
-            sudo env IGNORE_OSVERSION=yes /usr/sbin/pkg install -y openjdk21
+            sudo /usr/sbin/pkg update -f
+            sudo /usr/sbin/pkg install -y openjdk21
             export JAVA_HOME=/usr/local/openjdk21
             export PATH="$JAVA_HOME/bin:$PATH"
             ./gradlew --no-daemon -g .gradle build
