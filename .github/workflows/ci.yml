@@ -65,6 +65,7 @@ jobs:
           operating_system: freebsd
           version: '14.2'
           run: |
+            sudo mount -t procfs proc /proc
             sudo pkg install -y openjdk21 bash
             export JAVA_HOME=/usr/local/openjdk21
             export PATH=$JAVA_HOME/bin:$PATH
@@ -99,10 +100,11 @@ jobs:
           run: |
             sudo mount -t fdescfs fdesc /dev/fd
             sudo mount -t procfs proc /proc
+            sudo mport config set mirror_region uk
             sudo mport install openjdk21-bin bash
             export JAVA_HOME=/usr/local/openjdk21
             export PATH=$JAVA_HOME/bin:$PATH
-            ./gradlew --no-daemon -g .gradle build
+            /usr/local/bin/bash ./gradlew --no-daemon -g .gradle build
 
       - name: Upload test reports
         if: always()
