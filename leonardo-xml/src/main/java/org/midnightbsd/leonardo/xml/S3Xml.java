@@ -390,6 +390,39 @@ public final class S3Xml {
     }
 
     // -------------------------------------------------------------------------
+    // Phase 7 — encryption, ownership controls, accelerate GET responses
+    // -------------------------------------------------------------------------
+
+    /**
+     * Response body for GetBucketEncryption.
+     * Returns stored XML verbatim; callers should 404 if null.
+     */
+    public static String getBucketEncryption(final String storedXml) {
+        return storedXml != null ? storedXml
+                : PREAMBLE + "<ServerSideEncryptionConfiguration" + NS + "/>";
+    }
+
+    /**
+     * Response body for GetBucketOwnershipControls.
+     * Returns stored XML verbatim; callers should 404 if null.
+     */
+    public static String getBucketOwnershipControls(final String storedXml) {
+        return storedXml != null ? storedXml
+                : PREAMBLE + "<OwnershipControls" + NS + "/>";
+    }
+
+    /** Response body for GetBucketAccelerateConfiguration. */
+    public static String getBucketAccelerateConfiguration(final String status) {
+        final var sb = new StringBuilder(PREAMBLE);
+        sb.append("<AccelerateConfiguration").append(NS).append(">");
+        if (status != null && !status.isBlank()) {
+            sb.append(t("Status", status));
+        }
+        sb.append("</AccelerateConfiguration>");
+        return sb.toString();
+    }
+
+    // -------------------------------------------------------------------------
     // Phase 4 — object configuration GET responses
     // -------------------------------------------------------------------------
 

@@ -140,6 +140,15 @@ public final class BucketController {
         if (request.getParameters().contains("replication")) {
             return putBucketReplication(bucket, body);
         }
+        if (request.getParameters().contains("encryption")) {
+            return putBucketEncryption(bucket, body);
+        }
+        if (request.getParameters().contains("ownershipControls")) {
+            return putBucketOwnershipControls(bucket, body);
+        }
+        if (request.getParameters().contains("accelerate")) {
+            return putBucketAccelerateConfiguration(bucket, body);
+        }
 
         // CreateBucket
         final String identity = request.getAttribute("s3.identity", String.class)
@@ -188,6 +197,12 @@ public final class BucketController {
         }
         if (request.getParameters().contains("replication")) {
             return deleteBucketReplication(bucket);
+        }
+        if (request.getParameters().contains("encryption")) {
+            return deleteBucketEncryption(bucket);
+        }
+        if (request.getParameters().contains("ownershipControls")) {
+            return deleteBucketOwnershipControls(bucket);
         }
 
         // DeleteBucket
@@ -287,6 +302,15 @@ public final class BucketController {
         }
         if (request.getParameters().contains("replication")) {
             return getBucketReplication(bucket);
+        }
+        if (request.getParameters().contains("encryption")) {
+            return getBucketEncryption(bucket);
+        }
+        if (request.getParameters().contains("ownershipControls")) {
+            return getBucketOwnershipControls(bucket);
+        }
+        if (request.getParameters().contains("accelerate")) {
+            return getBucketAccelerateConfiguration(bucket);
         }
 
         // ListObjectsV2 (list-type=2) or ListObjects v1
@@ -1009,6 +1033,107 @@ public final class BucketController {
     private HttpResponse<String> deleteBucketReplication(final String bucket) {
         return clearBucketConfig(bucket,
                 meta -> meta.withReplicationConfigXml(null), "DeleteBucketReplication");
+    }
+
+    // =========================================================================
+    // Phase 7 — encryption, ownership controls, accelerate (stubs)
+    // =========================================================================
+
+    private HttpResponse<String> putBucketEncryption(
+            final String bucket, final byte[] body) {
+        try {
+            final String xml = BucketConfigParser.parseEncryptionConfig(body);
+            bucketService.updateBucket(bucket, meta -> meta.withSseConfigXml(xml));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketEncryption '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> getBucketEncryption(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            if (meta.sseConfigXml() == null) {
+                return s3Error(S3Xml.error("ServerSideEncryptionConfigurationNotFoundError",
+                        "The server side encryption configuration was not found.", null), 404);
+            }
+            return HttpResponse.ok(S3Xml.getBucketEncryption(meta.sseConfigXml()))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> deleteBucketEncryption(final String bucket) {
+        return clearBucketConfig(bucket,
+                meta -> meta.withSseConfigXml(null), "DeleteBucketEncryption");
+    }
+
+    private HttpResponse<String> putBucketOwnershipControls(
+            final String bucket, final byte[] body) {
+        try {
+            final String xml = BucketConfigParser.parseOwnershipControls(body);
+            bucketService.updateBucket(bucket, meta -> meta.withOwnershipControlsXml(xml));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketOwnershipControls '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> getBucketOwnershipControls(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            if (meta.ownershipControlsXml() == null) {
+                return s3Error(S3Xml.error("OwnershipControlsNotFoundError",
+                        "Ownership controls were not found.", null), 404);
+            }
+            return HttpResponse.ok(S3Xml.getBucketOwnershipControls(meta.ownershipControlsXml()))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> deleteBucketOwnershipControls(final String bucket) {
+        return clearBucketConfig(bucket,
+                meta -> meta.withOwnershipControlsXml(null), "DeleteBucketOwnershipControls");
+    }
+
+    private HttpResponse<String> putBucketAccelerateConfiguration(
+            final String bucket, final byte[] body) {
+        try {
+            final String status = BucketConfigParser.parseAccelerateStatus(body);
+            bucketService.updateBucket(bucket, meta -> meta.withAccelerateStatus(status));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketAccelerateConfiguration '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> getBucketAccelerateConfiguration(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            return HttpResponse.ok(
+                    S3Xml.getBucketAccelerateConfiguration(meta.accelerateStatus()))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
     }
 
     // =========================================================================

@@ -327,6 +327,50 @@ final class BucketConfigParser {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Phase 7 — encryption, ownership controls, accelerate
+    // -------------------------------------------------------------------------
+
+    /** Parses {@code PutBucketEncryption} body; validates XML and returns raw UTF-8 string. */
+    public static String parseEncryptionConfig(final byte[] body) {
+        if (body == null || body.length == 0) {
+            throw new IllegalArgumentException("PutBucketEncryption body must not be empty.");
+        }
+        return parseRawXml(body);
+    }
+
+    /** Parses {@code PutBucketOwnershipControls} body; validates XML and returns raw UTF-8 string. */
+    public static String parseOwnershipControls(final byte[] body) {
+        if (body == null || body.length == 0) {
+            throw new IllegalArgumentException("PutBucketOwnershipControls body must not be empty.");
+        }
+        return parseRawXml(body);
+    }
+
+    /**
+     * Parses {@code PutBucketAccelerateConfiguration} body.
+     * Returns {@code "Enabled"}, {@code "Suspended"}, or {@code null} for an empty config.
+     */
+    public static String parseAccelerateStatus(final byte[] body) {
+        if (body == null || body.length == 0) return null;
+        try {
+            final DocumentBuilderFactory f = DocumentBuilderFactory.newDefaultInstance();
+            f.setNamespaceAware(false);
+            f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            final Document doc = f.newDocumentBuilder().parse(new ByteArrayInputStream(body));
+            final String status = text(doc.getDocumentElement(), "Status");
+            if (status == null || status.isEmpty()) return null;
+            if (!"Enabled".equals(status) && !"Suspended".equals(status)) {
+                throw new IllegalArgumentException("AccelerateConfiguration Status must be 'Enabled' or 'Suspended'");
+            }
+            return status;
+        } catch (final IllegalArgumentException ex) {
+            throw ex;
+        } catch (final Exception ex) {
+            throw new IllegalArgumentException("Malformed AccelerateConfiguration XML: " + ex.getMessage(), ex);
+        }
+    }
+
     /** Parses a {@code PutBucketLogging} request body, returning a {@link BucketMetadata.LoggingConfig}. */
     public static BucketMetadata.LoggingConfig parseLoggingConfig(final byte[] body) {
         if (body == null || body.length == 0) return null;
