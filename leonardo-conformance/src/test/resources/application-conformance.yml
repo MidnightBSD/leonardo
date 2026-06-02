@@ -1,0 +1,43 @@
+# Copyright 2026 The Leonardo Authors.
+# Licensed under the Apache License, Version 2.0.
+#
+# Loaded when MICRONAUT_ENVIRONMENTS=conformance (set by @MicronautTest(environments = "conformance")).
+# Overrides the production defaults in application.yml so the conformance suite
+# can start cleanly inside a CI runner without /var/leonardo or real credentials.
+
+micronaut:
+  server:
+    netty:
+      # port: 0 lets the OS pick a free port; avoids TIME_WAIT conflicts on Linux
+      # when multiple test classes each start their own Micronaut context.
+      listeners:
+        main:
+          host: 127.0.0.1
+          port: 0
+        admin:
+          host: 127.0.0.1
+          port: 0
+
+leonardo:
+  storage:
+    base_dir: /tmp/leonardo-conformance
+    tmp_dir: /tmp/leonardo-conformance/tmp
+    fsync_on_write: false     # speed; we're not testing crash-safety here
+    max_object_size: 104857600  # 100 MiB ceiling for tests (default is 5 TiB)
+  limits:
+    max_multipart_parts: 100
+    # Use 100 KiB min part size so multipart tests don't need to upload 5 MiB
+    min_part_size: 102400
+    max_part_size: 5368709120
+    request_timeout_seconds: 60
+  auth:
+    api_keys_file: /tmp/leonardo-conformance/config/api-keys.yaml
+    allow_anonymous_read: false
+    allow_sigv2: true
+  logging:
+    access_log: /tmp/leonardo-conformance/logs/access.log
+    audit_log: /tmp/leonardo-conformance/logs/audit.log
+  features:
+    versioning_enabled: true
+    multipart_enabled: true
+    presigned_urls_enabled: true

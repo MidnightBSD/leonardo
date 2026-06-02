@@ -200,13 +200,17 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
 
     private static String canonicalizeQueryString(final String rawQuery) {
         if (rawQuery == null || rawQuery.isEmpty()) return "";
-        // Parse into sorted map (TreeMap sorts by key; tie-break by value)
+        // Parse into sorted map (TreeMap sorts by key; tie-break by value).
+        // Decode each raw (already-percent-encoded) name/value before re-encoding so
+        // that values like "logs%2F" round-trip correctly instead of becoming "logs%252F".
         final Map<String, List<String>> params = new TreeMap<>();
         for (final String pair : rawQuery.split("&", -1)) {
             final int eq = pair.indexOf('=');
-            final String key = eq < 0 ? pair : pair.substring(0, eq);
-            final String val = eq < 0 ? "" : pair.substring(eq + 1);
-            params.computeIfAbsent(uriEncode(key), k -> new ArrayList<>()).add(uriEncode(val));
+            final String rawKey = eq < 0 ? pair : pair.substring(0, eq);
+            final String rawVal = eq < 0 ? "" : pair.substring(eq + 1);
+            final String key = uriEncode(java.net.URLDecoder.decode(rawKey, StandardCharsets.UTF_8));
+            final String val = uriEncode(java.net.URLDecoder.decode(rawVal, StandardCharsets.UTF_8));
+            params.computeIfAbsent(key, k -> new ArrayList<>()).add(val);
         }
         final StringJoiner sj = new StringJoiner("&");
         params.forEach((k, vals) -> {

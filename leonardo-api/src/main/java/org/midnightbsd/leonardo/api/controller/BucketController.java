@@ -16,10 +16,10 @@ import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.MediaType;
 import io.micronaut.http.annotation.Body;
+import io.micronaut.http.annotation.Consumes;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Delete;
 import io.micronaut.http.annotation.Get;
-import io.micronaut.http.annotation.Head;
 import io.micronaut.http.annotation.Header;
 import io.micronaut.http.annotation.PathVariable;
 import io.micronaut.http.annotation.Post;
@@ -37,12 +37,15 @@ import org.midnightbsd.leonardo.xml.S3Xml;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.ByteArrayInputStream;
+import java.util.Optional;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Optional;
 
 /**
  * S3 bucket-level endpoints:
@@ -68,6 +71,8 @@ public final class BucketController {
 
     private static final Logger LOG = LoggerFactory.getLogger(BucketController.class);
 
+    private static final ObjectMapper POLICY_MAPPER = new ObjectMapper();
+
     private final BucketService bucketService;
     private final ObjectService objectService;
     private final MultipartService multipartService;
@@ -82,31 +87,20 @@ public final class BucketController {
     }
 
     // -------------------------------------------------------------------------
-    // HeadBucket
-    // -------------------------------------------------------------------------
-
-    @Head
-    public HttpResponse<?> headBucket(@PathVariable final String bucket) {
-        try {
-            bucketService.headBucket(bucket);
-            return HttpResponse.ok();
-        } catch (final S3Exception ex) {
-            return s3Error(ex);
-        }
-    }
-
-    // -------------------------------------------------------------------------
     // PUT /<bucket> — CreateBucket + Phase 3 bucket configuration
     // -------------------------------------------------------------------------
 
     @Put
+    @Consumes(MediaType.ALL)
     @Produces(MediaType.APPLICATION_XML)
     public HttpResponse<String> putBucket(
             @PathVariable final String bucket,
             @Header(value = "x-amz-acl", defaultValue = "") final String cannedAcl,
-            @Body final byte[] body,
+            @Header(value = "x-amz-bucket-object-lock-enabled", defaultValue = "") final String objectLockHeader,
+            @Body final Optional<String> rawBody,
             final HttpRequest<?> request) {
 
+        final byte[] body = rawBody.map(s -> s.getBytes(java.nio.charset.StandardCharsets.UTF_8)).orElse(null);
         if (request.getParameters().contains("acl")) {
             return putBucketAcl(bucket, body, cannedAcl);
         }
@@ -142,8 +136,9 @@ public final class BucketController {
         final String identity = request.getAttribute("s3.identity", String.class)
                 .orElse("anonymous");
         final String locationConstraint = parseLocationConstraint(body);
+        final boolean objectLockEnabled = "true".equalsIgnoreCase(objectLockHeader);
         try {
-            bucketService.createBucket(bucket, identity, locationConstraint);
+            bucketService.createBucket(bucket, identity, locationConstraint, objectLockEnabled);
             return HttpResponse.<String>ok()
                     .header("Location", "/" + bucket);
         } catch (final S3Exception ex) {
@@ -216,6 +211,16 @@ public final class BucketController {
             @QueryValue(value = "max-uploads", defaultValue = "1000") final int maxUploads,
             @QueryValue(value = "version-id-marker", defaultValue = "") final String versionIdMarker,
             final HttpRequest<?> request) {
+
+        // HeadBucket: GET handler also serves HEAD (Micronaut strips response body)
+        if (io.micronaut.http.HttpMethod.HEAD == request.getMethod()) {
+            try {
+                bucketService.headBucket(bucket);
+                return HttpResponse.<String>ok();
+            } catch (final S3Exception ex) {
+                return s3Error(ex);
+            }
+        }
 
         // Sub-resource dispatching (query-param presence, no value needed)
         if (request.getParameters().contains("location")) {
@@ -323,19 +328,21 @@ public final class BucketController {
     // -------------------------------------------------------------------------
 
     @Post
+    @Consumes(MediaType.ALL)
     @Produces(MediaType.APPLICATION_XML)
     public HttpResponse<String> postBucket(
             @PathVariable final String bucket,
-            @Body final byte[] body,
+            @Body final Optional<byte[]> body,
             final HttpRequest<?> request) {
 
+        final byte[] xmlBody = body.orElse(null);
         if (!request.getParameters().contains("delete")) {
             return s3Error(S3Xml.error("MethodNotAllowed",
                     "The specified method is not allowed against this resource.", null), 405);
         }
 
         try {
-            final DeleteObjectsRequest deleteReq = DeleteObjectsRequest.parse(body);
+            final DeleteObjectsRequest deleteReq = DeleteObjectsRequest.parse(xmlBody);
             final ObjectService.DeleteResult result =
                     objectService.deleteObjects(bucket, deleteReq.keys());
 
@@ -478,6 +485,20 @@ public final class BucketController {
                         "Policy body must not be empty.", null), 400);
             }
             final String policyJson = new String(body, StandardCharsets.UTF_8);
+
+            final JsonNode root;
+            try {
+                root = POLICY_MAPPER.readTree(policyJson);
+            } catch (final IOException ex) {
+                return s3Error(S3Xml.error("MalformedPolicy",
+                        "Invalid JSON in policy document.", null), 400);
+            }
+            final JsonNode versionNode = root.get("Version");
+            if (versionNode != null && !"2012-10-17".equals(versionNode.asText())) {
+                return s3Error(S3Xml.error("MalformedPolicy",
+                        "Policy document must use Version 2012-10-17.", null), 400);
+            }
+
             bucketService.updateBucket(bucket, meta -> meta.withPolicyJson(policyJson));
             return HttpResponse.<String>status(HttpStatus.NO_CONTENT);
         } catch (final S3Exception ex) {

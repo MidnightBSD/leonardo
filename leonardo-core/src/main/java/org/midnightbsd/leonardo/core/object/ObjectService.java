@@ -161,6 +161,9 @@ public final class ObjectService {
         ensureBucketExists(bucket);
         final ObjectMetadata meta = metaStore.read(bucket, key)
                 .orElseThrow(() -> S3Exception.noSuchKey(key));
+        if (isDeleteMarker(meta)) {
+            throw S3Exception.noSuchKey(key);
+        }
         final byte[] data = payloadStore.read(bucket, meta.objectId());
         return new GetResult(meta, data);
     }
@@ -186,8 +189,12 @@ public final class ObjectService {
     /** Returns the object metadata without the payload for the current version. */
     public ObjectMetadata headObject(final String bucket, final String key) {
         ensureBucketExists(bucket);
-        return metaStore.read(bucket, key)
+        final ObjectMetadata meta = metaStore.read(bucket, key)
                 .orElseThrow(() -> S3Exception.noSuchKey(key));
+        if (isDeleteMarker(meta)) {
+            throw S3Exception.noSuchKey(key);
+        }
+        return meta;
     }
 
     /** Returns the object metadata without the payload for a specific version. */
@@ -573,6 +580,10 @@ public final class ObjectService {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    private static boolean isDeleteMarker(final ObjectMetadata meta) {
+        return meta.objectId() == null || meta.objectId().isEmpty();
+    }
 
     private void ensureBucketExists(final String bucket) {
         if (!bucketStore.exists(bucket)) {

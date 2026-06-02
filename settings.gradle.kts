@@ -33,5 +33,6 @@ include(
     "leonardo-yaml",
     "leonardo-xml",
     "leonardo-admin",
-    "leonardo-cli"
+    "leonardo-cli",
+    "leonardo-conformance"
 )

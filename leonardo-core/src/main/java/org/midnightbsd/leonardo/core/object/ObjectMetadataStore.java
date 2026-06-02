@@ -280,14 +280,17 @@ public final class ObjectMetadataStore {
                 }
             }
 
-            // Current (latest) version
+            // Current (latest) version (or delete marker)
             if (versions.size() >= limit) {
                 truncated = true;
                 nextKeyMarkerResult = key;
                 break;
             }
-            versions.add(new VersionEntry(key, null, meta.etag(), meta.size(),
-                    false, true, meta.lastModified(),
+            final boolean isMarker = meta.objectId() == null || meta.objectId().isEmpty();
+            versions.add(new VersionEntry(key, meta.versionId(),
+                    isMarker ? "" : meta.etag(),
+                    isMarker ? 0 : meta.size(),
+                    isMarker, true, meta.lastModified(),
                     meta.storageClass() != null ? meta.storageClass() : "STANDARD"));
 
             // Historical versions (oldest first within the same key)

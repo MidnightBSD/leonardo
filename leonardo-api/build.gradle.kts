@@ -21,6 +21,7 @@ dependencies {
     api(project(":leonardo-auth"))
     api(project(":leonardo-core"))
     api(project(":leonardo-xml"))
+    api("com.fasterxml.jackson.core:jackson-databind")
 
     testAnnotationProcessor(platform("io.micronaut.platform:micronaut-platform:${rootProject.extra["micronautVersion"]}"))
     testAnnotationProcessor("io.micronaut:micronaut-inject-java")

@@ -39,6 +39,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.Optional;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -260,21 +261,21 @@ public final class ObjectController {
                 final String bypassGovernanceRetention,
             @Header(value = "content-encoding", defaultValue = "") final String contentEncoding,
             @Header(value = "x-amz-content-sha256", defaultValue = "") final String payloadHash,
-            @Body final byte[] body,
+            @Body final Optional<byte[]> body,
             final HttpRequest<?> request) {
-
+        final byte[] rawBody = body.orElse(null);
         // Sub-resource dispatches before UploadPart check
         if (request.getParameters().contains("acl")) {
-            return handlePutObjectAcl(bucket, key, body, cannedAcl);
+            return handlePutObjectAcl(bucket, key, rawBody, cannedAcl);
         }
         if (request.getParameters().contains("tagging")) {
-            return handlePutObjectTagging(bucket, key, body);
+            return handlePutObjectTagging(bucket, key, rawBody);
         }
         if (request.getParameters().contains("legal-hold")) {
-            return handlePutObjectLegalHold(bucket, key, body);
+            return handlePutObjectLegalHold(bucket, key, rawBody);
         }
         if (request.getParameters().contains("retention")) {
-            return handlePutObjectRetention(bucket, key, body,
+            return handlePutObjectRetention(bucket, key, rawBody,
                     "true".equalsIgnoreCase(bypassGovernanceRetention));
         }
 
@@ -283,7 +284,7 @@ public final class ObjectController {
             if (!copySource.isEmpty()) {
                 return handleUploadPartCopy(bucket, key, uploadId, partNumber, copySource);
             }
-            return handleUploadPart(bucket, key, uploadId, partNumber, body,
+            return handleUploadPart(bucket, key, uploadId, partNumber, rawBody,
                     contentEncoding, payloadHash);
         }
 
@@ -293,7 +294,7 @@ public final class ObjectController {
         }
 
         // PutObject — decode aws-chunked framing if present (AWS CLI v2 default)
-        byte[] payload = body != null ? body : new byte[0];
+        byte[] payload = rawBody != null ? rawBody : new byte[0];
         if (AwsChunkedDecoder.isChunked(
                 contentEncoding.isEmpty() ? null : contentEncoding,
                 payloadHash.isEmpty() ? null : payloadHash)) {
@@ -359,6 +360,9 @@ public final class ObjectController {
                     .header("ETag", "\"" + etag + "\"");
         } catch (final S3Exception ex) {
             return BucketController.s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return BucketController.s3Error(
+                    S3Xml.error("InvalidArgument", ex.getMessage(), null), 400);
         } catch (final IOException ex) {
             LOG.error("UploadPart '{}/{}' part {} failed", bucket, key, partNumber, ex);
             return BucketController.internalError();
@@ -436,14 +440,15 @@ public final class ObjectController {
             @QueryValue(value = "uploadId", defaultValue = "") final String uploadId,
             @Header(value = "content-type", defaultValue = "") final String contentType,
             @Header(value = CALLER_OBJECT_ID_HEADER, defaultValue = "") final String callerObjectId,
-            @Body final byte[] body,
+            @Body final Optional<byte[]> body,
             final HttpRequest<?> request) {
 
+        final byte[] xmlBody = body.orElse(null);
         if (request.getParameters().contains("uploads")) {
             return handleCreateMultipartUpload(bucket, key, contentType, callerObjectId, request);
         }
         if (!uploadId.isEmpty()) {
-            return handleCompleteMultipartUpload(bucket, key, uploadId, body);
+            return handleCompleteMultipartUpload(bucket, key, uploadId, xmlBody);
         }
         if (request.getParameters().contains("restore")) {
             return handleRestoreObject(bucket, key);
@@ -866,10 +871,12 @@ public final class ObjectController {
         if (meta.size() >= 0) {
             response.header("Content-Length", String.valueOf(meta.size()));
         }
+        if (meta.userMetadata() != null) {
+            meta.userMetadata().forEach(response::header);
+        }
         return response;
     }
 
-    /** Extracts {@code x-amz-checksum-*} headers into a Map (algorithm → Base64 value). */
     private static Map<String, String> extractChecksums(final HttpRequest<?> request) {
         final var result = new HashMap<String, String>();
         request.getHeaders().forEachValue((name, value) -> {

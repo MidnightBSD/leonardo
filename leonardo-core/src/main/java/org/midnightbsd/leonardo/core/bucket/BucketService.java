@@ -54,16 +54,18 @@ public final class BucketService {
      * Creates a new bucket. Validates the name, rejects if it already exists,
      * initializes the directory structure, and writes {@code bucket.yaml}.
      *
-     * @param name              the bucket name (validated by {@link StorageLayout#validateBucketName})
-     * @param owner             the authenticated identity creating the bucket
+     * @param name               the bucket name (validated by {@link StorageLayout#validateBucketName})
+     * @param owner              the authenticated identity creating the bucket
      * @param locationConstraint if non-null, must match the server's configured region
+     * @param objectLockEnabled  if true, enables object lock and forces versioning on
      * @throws S3Exception on validation failure or duplicate bucket
      * @throws IOException on filesystem errors
      */
     public void createBucket(
             final String name,
             final String owner,
-            final String locationConstraint) throws IOException {
+            final String locationConstraint,
+            final boolean objectLockEnabled) throws IOException {
 
         try {
             StorageLayout.validateBucketName(name);
@@ -89,9 +91,18 @@ public final class BucketService {
             Files.createDirectories(layout.bucketUploadsMetaDir(name));
             Files.createDirectories(layout.bucketDataDir(name));
 
+            // Object lock requires versioning; enable both together
+            final BucketMetadata.VersioningConfig versioning = objectLockEnabled
+                    ? new BucketMetadata.VersioningConfig(
+                            BucketMetadata.VersioningStatus.ENABLED, false)
+                    : null;
+            final BucketMetadata.ObjectLockConfig olc = objectLockEnabled
+                    ? new BucketMetadata.ObjectLockConfig(true, null, null, null)
+                    : null;
+
             final BucketMetadata meta = new BucketMetadata(
                     name, Instant.now(), owner, defaultRegion,
-                    null, null, null, null, null, null, null, null, null,
+                    versioning, null, null, null, null, null, null, olc, null,
                     BucketMetadata.CallerObjectIdsMode.ALLOWED,
                     BucketMetadata.FsyncMode.INHERIT,
                     null, false, null, null, null, null);

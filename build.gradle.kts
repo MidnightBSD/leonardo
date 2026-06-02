@@ -23,6 +23,7 @@ val junitVersion by extra("5.11.3")
 val assertjVersion by extra("3.26.3")
 val jqwikVersion by extra("1.9.1")
 val mockitoVersion by extra("5.14.2")
+val awsSdkVersion by extra("2.29.43")
 
 allprojects {
     group = "org.midnightbsd.leonardo"
