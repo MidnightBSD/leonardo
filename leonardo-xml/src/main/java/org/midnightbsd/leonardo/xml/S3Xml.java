@@ -351,6 +351,45 @@ public final class S3Xml {
     }
 
     // -------------------------------------------------------------------------
+    // Phase 6 — notifications, logging, replication GET responses
+    // -------------------------------------------------------------------------
+
+    /**
+     * Response body for GetBucketNotificationConfiguration.
+     * Returns stored XML verbatim, or an empty configuration element if none is set.
+     */
+    public static String getBucketNotificationConfiguration(final String storedXml) {
+        if (storedXml != null && !storedXml.isBlank()) {
+            return storedXml;
+        }
+        return PREAMBLE + "<NotificationConfiguration" + NS + "/>";
+    }
+
+    /** Response body for GetBucketLogging. */
+    public static String getBucketLogging(final String targetBucket, final String targetPrefix) {
+        final var sb = new StringBuilder(PREAMBLE);
+        sb.append("<BucketLoggingStatus").append(NS).append(">");
+        if (targetBucket != null && !targetBucket.isBlank()) {
+            sb.append("<LoggingEnabled>");
+            sb.append(t("TargetBucket", targetBucket));
+            sb.append(t("TargetPrefix", targetPrefix != null ? targetPrefix : ""));
+            sb.append("<TargetGrants/>");
+            sb.append("</LoggingEnabled>");
+        }
+        sb.append("</BucketLoggingStatus>");
+        return sb.toString();
+    }
+
+    /**
+     * Response body for GetBucketReplication.
+     * Returns stored XML verbatim; callers should 404 if null.
+     */
+    public static String getBucketReplication(final String storedXml) {
+        return storedXml != null ? storedXml
+                : PREAMBLE + "<ReplicationConfiguration" + NS + "/>";
+    }
+
+    // -------------------------------------------------------------------------
     // Phase 4 — object configuration GET responses
     // -------------------------------------------------------------------------
 

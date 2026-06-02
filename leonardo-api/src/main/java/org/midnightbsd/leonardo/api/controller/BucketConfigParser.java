@@ -305,4 +305,52 @@ final class BucketConfigParser {
     private static boolean boolOrFalse(final Element parent, final String tagName) {
         return "true".equalsIgnoreCase(text(parent, tagName));
     }
+
+    // -------------------------------------------------------------------------
+    // Phase 6 — notifications, logging, replication
+    // -------------------------------------------------------------------------
+
+    /**
+     * Validates that the body is well-formed XML and returns it as a UTF-8 string.
+     * Used for notification and replication configs that are stored verbatim.
+     */
+    public static String parseRawXml(final byte[] body) {
+        if (body == null || body.length == 0) return null;
+        try {
+            final DocumentBuilderFactory f = DocumentBuilderFactory.newDefaultInstance();
+            f.setNamespaceAware(false);
+            f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            f.newDocumentBuilder().parse(new ByteArrayInputStream(body)); // validate only
+            return new String(body, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (final Exception ex) {
+            throw new IllegalArgumentException("Malformed XML: " + ex.getMessage(), ex);
+        }
+    }
+
+    /** Parses a {@code PutBucketLogging} request body, returning a {@link BucketMetadata.LoggingConfig}. */
+    public static BucketMetadata.LoggingConfig parseLoggingConfig(final byte[] body) {
+        if (body == null || body.length == 0) return null;
+        try {
+            final DocumentBuilderFactory f = DocumentBuilderFactory.newDefaultInstance();
+            f.setNamespaceAware(false);
+            f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            final Document doc = f.newDocumentBuilder().parse(new ByteArrayInputStream(body));
+            final Element root = doc.getDocumentElement();
+            final Element enabled = firstElement(root, "LoggingEnabled");
+            if (enabled == null) {
+                return null; // empty BucketLoggingStatus = disable logging
+            }
+            final String targetBucket = text(enabled, "TargetBucket");
+            final String targetPrefix = text(enabled, "TargetPrefix");
+            if (targetBucket == null || targetBucket.isEmpty()) {
+                throw new IllegalArgumentException("LoggingEnabled requires TargetBucket");
+            }
+            return new BucketMetadata.LoggingConfig(targetBucket,
+                    targetPrefix != null ? targetPrefix : "");
+        } catch (final IllegalArgumentException ex) {
+            throw ex;
+        } catch (final Exception ex) {
+            throw new IllegalArgumentException("Malformed BucketLoggingStatus XML: " + ex.getMessage(), ex);
+        }
+    }
 }

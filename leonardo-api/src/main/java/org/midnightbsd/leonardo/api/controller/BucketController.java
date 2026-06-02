@@ -131,6 +131,15 @@ public final class BucketController {
         if (request.getParameters().contains("object-lock")) {
             return putObjectLockConfiguration(bucket, body);
         }
+        if (request.getParameters().contains("notification")) {
+            return putBucketNotification(bucket, body);
+        }
+        if (request.getParameters().contains("logging")) {
+            return putBucketLogging(bucket, body);
+        }
+        if (request.getParameters().contains("replication")) {
+            return putBucketReplication(bucket, body);
+        }
 
         // CreateBucket
         final String identity = request.getAttribute("s3.identity", String.class)
@@ -176,6 +185,9 @@ public final class BucketController {
         }
         if (request.getParameters().contains("publicAccessBlock")) {
             return deletePublicAccessBlock(bucket);
+        }
+        if (request.getParameters().contains("replication")) {
+            return deleteBucketReplication(bucket);
         }
 
         // DeleteBucket
@@ -266,6 +278,15 @@ public final class BucketController {
         }
         if (request.getParameters().contains("object-lock")) {
             return getObjectLockConfiguration(bucket);
+        }
+        if (request.getParameters().contains("notification")) {
+            return getBucketNotification(bucket);
+        }
+        if (request.getParameters().contains("logging")) {
+            return getBucketLogging(bucket);
+        }
+        if (request.getParameters().contains("replication")) {
+            return getBucketReplication(bucket);
         }
 
         // ListObjectsV2 (list-type=2) or ListObjects v1
@@ -889,6 +910,105 @@ public final class BucketController {
             LOG.error("PutObjectLockConfiguration '{}' failed", bucket, ex);
             return internalError();
         }
+    }
+
+    // =========================================================================
+    // Phase 6 — notifications, logging, replication (stubs)
+    // =========================================================================
+
+    private HttpResponse<String> putBucketNotification(
+            final String bucket, final byte[] body) {
+        try {
+            final String xml = (body == null || body.length == 0)
+                    ? null : BucketConfigParser.parseRawXml(body);
+            bucketService.updateBucket(bucket, meta -> meta.withNotificationConfigXml(xml));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketNotification '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> getBucketNotification(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            return HttpResponse.ok(S3Xml.getBucketNotificationConfiguration(meta.notificationConfigXml()))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> putBucketLogging(
+            final String bucket, final byte[] body) {
+        try {
+            final BucketMetadata.LoggingConfig lc = BucketConfigParser.parseLoggingConfig(body);
+            bucketService.updateBucket(bucket, meta -> meta.withLoggingConfig(lc));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketLogging '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> getBucketLogging(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            final BucketMetadata.LoggingConfig lc = meta.loggingConfig();
+            return HttpResponse.ok(S3Xml.getBucketLogging(
+                    lc != null ? lc.targetBucket() : null,
+                    lc != null ? lc.targetPrefix() : null))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> putBucketReplication(
+            final String bucket, final byte[] body) {
+        try {
+            if (body == null || body.length == 0) {
+                return s3Error(S3Xml.error("MalformedXML",
+                        "ReplicationConfiguration body must not be empty.", null), 400);
+            }
+            final String xml = BucketConfigParser.parseRawXml(body);
+            bucketService.updateBucket(bucket, meta -> meta.withReplicationConfigXml(xml));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketReplication '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> getBucketReplication(final String bucket) {
+        try {
+            final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            if (meta.replicationConfigXml() == null) {
+                return s3Error(S3Xml.error("ReplicationConfigurationNotFoundError",
+                        "The replication configuration was not found.", null), 404);
+            }
+            return HttpResponse.ok(S3Xml.getBucketReplication(meta.replicationConfigXml()))
+                    .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> deleteBucketReplication(final String bucket) {
+        return clearBucketConfig(bucket,
+                meta -> meta.withReplicationConfigXml(null), "DeleteBucketReplication");
     }
 
     // =========================================================================

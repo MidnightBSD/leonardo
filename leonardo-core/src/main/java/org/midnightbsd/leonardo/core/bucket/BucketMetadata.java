@@ -49,7 +49,12 @@ public record BucketMetadata(
         String defaultContentType,         // null = no default
         RateLimitConfig rateLimit,
         PublicAccessBlockConfig publicAccessBlock,
-        String requestPayer               // "BucketOwner" | "Requester" | null
+        String requestPayer,              // "BucketOwner" | "Requester" | null
+
+        // Phase 6 — notifications, logging, replication (stubs)
+        LoggingConfig loggingConfig,
+        String notificationConfigXml,     // raw XML from PutBucketNotificationConfiguration, or null
+        String replicationConfigXml       // raw XML from PutBucketReplication, or null
 ) {
     public enum CallerObjectIdsMode {
         @JsonProperty("required") REQUIRED,
@@ -101,6 +106,10 @@ public record BucketMetadata(
             int burstMultiplier,
             RateLimitScope scope) {}
 
+    public record LoggingConfig(
+            String targetBucket,   // null → logging disabled
+            String targetPrefix) {}
+
     // -------------------------------------------------------------------------
     // Copy helpers — each returns a new record with one field replaced.
     // -------------------------------------------------------------------------
@@ -109,70 +118,104 @@ public record BucketMetadata(
         return new BucketMetadata(name, createdAt, owner, region, versioning, newAcl, tags,
                 lifecycle, cors, website, encryption, objectLock, policyJson,
                 callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
-                rateLimit, publicAccessBlock, requestPayer);
+                rateLimit, publicAccessBlock, requestPayer,
+                loggingConfig, notificationConfigXml, replicationConfigXml);
     }
 
     public BucketMetadata withCors(final CorsConfig newCors) {
         return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
                 lifecycle, newCors, website, encryption, objectLock, policyJson,
                 callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
-                rateLimit, publicAccessBlock, requestPayer);
+                rateLimit, publicAccessBlock, requestPayer,
+                loggingConfig, notificationConfigXml, replicationConfigXml);
     }
 
     public BucketMetadata withTags(final Map<String, String> newTags) {
         return new BucketMetadata(name, createdAt, owner, region, versioning, acl, newTags,
                 lifecycle, cors, website, encryption, objectLock, policyJson,
                 callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
-                rateLimit, publicAccessBlock, requestPayer);
+                rateLimit, publicAccessBlock, requestPayer,
+                loggingConfig, notificationConfigXml, replicationConfigXml);
     }
 
     public BucketMetadata withVersioning(final VersioningConfig newVersioning) {
         return new BucketMetadata(name, createdAt, owner, region, newVersioning, acl, tags,
                 lifecycle, cors, website, encryption, objectLock, policyJson,
                 callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
-                rateLimit, publicAccessBlock, requestPayer);
+                rateLimit, publicAccessBlock, requestPayer,
+                loggingConfig, notificationConfigXml, replicationConfigXml);
     }
 
     public BucketMetadata withWebsite(final WebsiteConfig newWebsite) {
         return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
                 lifecycle, cors, newWebsite, encryption, objectLock, policyJson,
                 callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
-                rateLimit, publicAccessBlock, requestPayer);
+                rateLimit, publicAccessBlock, requestPayer,
+                loggingConfig, notificationConfigXml, replicationConfigXml);
     }
 
     public BucketMetadata withLifecycle(final LifecycleConfig newLifecycle) {
         return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
                 newLifecycle, cors, website, encryption, objectLock, policyJson,
                 callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
-                rateLimit, publicAccessBlock, requestPayer);
+                rateLimit, publicAccessBlock, requestPayer,
+                loggingConfig, notificationConfigXml, replicationConfigXml);
     }
 
     public BucketMetadata withPolicyJson(final String newPolicyJson) {
         return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
                 lifecycle, cors, website, encryption, objectLock, newPolicyJson,
                 callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
-                rateLimit, publicAccessBlock, requestPayer);
+                rateLimit, publicAccessBlock, requestPayer,
+                loggingConfig, notificationConfigXml, replicationConfigXml);
     }
 
     public BucketMetadata withPublicAccessBlock(final PublicAccessBlockConfig newPab) {
         return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
                 lifecycle, cors, website, encryption, objectLock, policyJson,
                 callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
-                rateLimit, newPab, requestPayer);
+                rateLimit, newPab, requestPayer,
+                loggingConfig, notificationConfigXml, replicationConfigXml);
     }
 
     public BucketMetadata withRequestPayer(final String newRequestPayer) {
         return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
                 lifecycle, cors, website, encryption, objectLock, policyJson,
                 callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
-                rateLimit, publicAccessBlock, newRequestPayer);
+                rateLimit, publicAccessBlock, newRequestPayer,
+                loggingConfig, notificationConfigXml, replicationConfigXml);
     }
 
     public BucketMetadata withObjectLock(final ObjectLockConfig newObjectLock) {
         return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
                 lifecycle, cors, website, encryption, newObjectLock, policyJson,
                 callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
-                rateLimit, publicAccessBlock, requestPayer);
+                rateLimit, publicAccessBlock, requestPayer,
+                loggingConfig, notificationConfigXml, replicationConfigXml);
+    }
+
+    public BucketMetadata withLoggingConfig(final LoggingConfig newLogging) {
+        return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
+                lifecycle, cors, website, encryption, objectLock, policyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, publicAccessBlock, requestPayer,
+                newLogging, notificationConfigXml, replicationConfigXml);
+    }
+
+    public BucketMetadata withNotificationConfigXml(final String newXml) {
+        return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
+                lifecycle, cors, website, encryption, objectLock, policyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, publicAccessBlock, requestPayer,
+                loggingConfig, newXml, replicationConfigXml);
+    }
+
+    public BucketMetadata withReplicationConfigXml(final String newXml) {
+        return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
+                lifecycle, cors, website, encryption, objectLock, policyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, publicAccessBlock, requestPayer,
+                loggingConfig, notificationConfigXml, newXml);
     }
 
     /**
