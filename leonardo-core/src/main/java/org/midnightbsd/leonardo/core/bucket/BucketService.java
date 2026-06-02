@@ -106,7 +106,8 @@ public final class BucketService {
                     BucketMetadata.CallerObjectIdsMode.ALLOWED,
                     BucketMetadata.FsyncMode.INHERIT,
                     null, false, null, null, null, null,
-                    null, null, null, null, null, null);
+                    null, null, null, null, null, null,
+                    null, null, null, null, null);
             store.write(meta);
         } finally {
             lock.writeLock().unlock();

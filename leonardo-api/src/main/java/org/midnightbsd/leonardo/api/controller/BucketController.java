@@ -149,6 +149,21 @@ public final class BucketController {
         if (request.getParameters().contains("accelerate")) {
             return putBucketAccelerateConfiguration(bucket, body);
         }
+        if (request.getParameters().contains("analytics")) {
+            return putBucketAnalyticsConfiguration(bucket, request, body);
+        }
+        if (request.getParameters().contains("metrics")) {
+            return putBucketMetricsConfiguration(bucket, request, body);
+        }
+        if (request.getParameters().contains("inventory")) {
+            return putBucketInventoryConfiguration(bucket, request, body);
+        }
+        if (request.getParameters().contains("intelligent-tiering")) {
+            return putBucketIntelligentTieringConfiguration(bucket, request, body);
+        }
+        if (request.getParameters().contains("abac")) {
+            return putBucketAbac(bucket, body);
+        }
 
         // CreateBucket
         final String identity = request.getAttribute("s3.identity", String.class)
@@ -203,6 +218,18 @@ public final class BucketController {
         }
         if (request.getParameters().contains("ownershipControls")) {
             return deleteBucketOwnershipControls(bucket);
+        }
+        if (request.getParameters().contains("analytics")) {
+            return deleteBucketAnalyticsConfiguration(bucket, request);
+        }
+        if (request.getParameters().contains("metrics")) {
+            return deleteBucketMetricsConfiguration(bucket, request);
+        }
+        if (request.getParameters().contains("inventory")) {
+            return deleteBucketInventoryConfiguration(bucket, request);
+        }
+        if (request.getParameters().contains("intelligent-tiering")) {
+            return deleteBucketIntelligentTieringConfiguration(bucket, request);
         }
 
         // DeleteBucket
@@ -311,6 +338,21 @@ public final class BucketController {
         }
         if (request.getParameters().contains("accelerate")) {
             return getBucketAccelerateConfiguration(bucket);
+        }
+        if (request.getParameters().contains("analytics")) {
+            return getBucketAnalyticsConfiguration(bucket, request);
+        }
+        if (request.getParameters().contains("metrics")) {
+            return getBucketMetricsConfiguration(bucket, request);
+        }
+        if (request.getParameters().contains("inventory")) {
+            return getBucketInventoryConfiguration(bucket, request);
+        }
+        if (request.getParameters().contains("intelligent-tiering")) {
+            return getBucketIntelligentTieringConfiguration(bucket, request);
+        }
+        if (request.getParameters().contains("abac")) {
+            return getBucketAbac(bucket);
         }
 
         // ListObjectsV2 (list-type=2) or ListObjects v1
@@ -1131,6 +1173,271 @@ public final class BucketController {
             return HttpResponse.ok(
                     S3Xml.getBucketAccelerateConfiguration(meta.accelerateStatus()))
                     .contentType(MediaType.APPLICATION_XML);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    // =========================================================================
+    // Phase 8 — analytics, metrics, inventory, intelligent-tiering, ABAC (stubs)
+    // =========================================================================
+
+    private HttpResponse<String> putBucketAnalyticsConfiguration(
+            final String bucket, final HttpRequest<?> request, final byte[] body) {
+        final String id = request.getParameters().getFirst("id").orElse(null);
+        if (id == null || id.isBlank()) {
+            return s3Error(S3Xml.error("InvalidArgument", "Query parameter 'id' is required.", "id"), 400);
+        }
+        try {
+            final String xml = BucketConfigParser.parseAnalyticsConfiguration(body);
+            bucketService.updateBucket(bucket, meta -> meta.withAnalyticsConfiguration(id, xml));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketAnalyticsConfiguration '{}' id='{}' failed", bucket, id, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> getBucketAnalyticsConfiguration(
+            final String bucket, final HttpRequest<?> request) {
+        try {
+            final var meta = bucketService.getBucketMetadata(bucket);
+            final var idOpt = request.getParameters().getFirst("id");
+            if (idOpt.isPresent()) {
+                final String xml = meta.analyticsConfigurations() != null
+                        ? meta.analyticsConfigurations().get(idOpt.get()) : null;
+                if (xml == null) {
+                    return HttpResponse.notFound(S3Xml.error("NoSuchConfiguration",
+                            "The specified configuration does not exist.", null));
+                }
+                return HttpResponse.ok(xml).contentType("application/xml");
+            }
+            return HttpResponse.ok(S3Xml.listBucketAnalyticsConfigurations(meta.analyticsConfigurations()))
+                    .contentType("application/xml");
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> deleteBucketAnalyticsConfiguration(
+            final String bucket, final HttpRequest<?> request) {
+        final String id = request.getParameters().getFirst("id").orElse(null);
+        if (id == null || id.isBlank()) {
+            return s3Error(S3Xml.error("InvalidArgument", "Query parameter 'id' is required.", "id"), 400);
+        }
+        try {
+            bucketService.updateBucket(bucket, meta -> meta.withAnalyticsConfiguration(id, null));
+            return HttpResponse.<String>status(HttpStatus.NO_CONTENT);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IOException ex) {
+            LOG.error("DeleteBucketAnalyticsConfiguration '{}' id='{}' failed", bucket, id, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> putBucketMetricsConfiguration(
+            final String bucket, final HttpRequest<?> request, final byte[] body) {
+        final String id = request.getParameters().getFirst("id").orElse(null);
+        if (id == null || id.isBlank()) {
+            return s3Error(S3Xml.error("InvalidArgument", "Query parameter 'id' is required.", "id"), 400);
+        }
+        try {
+            final String xml = BucketConfigParser.parseMetricsConfiguration(body);
+            bucketService.updateBucket(bucket, meta -> meta.withMetricsConfiguration(id, xml));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketMetricsConfiguration '{}' id='{}' failed", bucket, id, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> getBucketMetricsConfiguration(
+            final String bucket, final HttpRequest<?> request) {
+        try {
+            final var meta = bucketService.getBucketMetadata(bucket);
+            final var idOpt = request.getParameters().getFirst("id");
+            if (idOpt.isPresent()) {
+                final String xml = meta.metricsConfigurations() != null
+                        ? meta.metricsConfigurations().get(idOpt.get()) : null;
+                if (xml == null) {
+                    return HttpResponse.notFound(S3Xml.error("NoSuchConfiguration",
+                            "The specified configuration does not exist.", null));
+                }
+                return HttpResponse.ok(xml).contentType("application/xml");
+            }
+            return HttpResponse.ok(S3Xml.listBucketMetricsConfigurations(meta.metricsConfigurations()))
+                    .contentType("application/xml");
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> deleteBucketMetricsConfiguration(
+            final String bucket, final HttpRequest<?> request) {
+        final String id = request.getParameters().getFirst("id").orElse(null);
+        if (id == null || id.isBlank()) {
+            return s3Error(S3Xml.error("InvalidArgument", "Query parameter 'id' is required.", "id"), 400);
+        }
+        try {
+            bucketService.updateBucket(bucket, meta -> meta.withMetricsConfiguration(id, null));
+            return HttpResponse.<String>status(HttpStatus.NO_CONTENT);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IOException ex) {
+            LOG.error("DeleteBucketMetricsConfiguration '{}' id='{}' failed", bucket, id, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> putBucketInventoryConfiguration(
+            final String bucket, final HttpRequest<?> request, final byte[] body) {
+        final String id = request.getParameters().getFirst("id").orElse(null);
+        if (id == null || id.isBlank()) {
+            return s3Error(S3Xml.error("InvalidArgument", "Query parameter 'id' is required.", "id"), 400);
+        }
+        try {
+            final String xml = BucketConfigParser.parseInventoryConfiguration(body);
+            bucketService.updateBucket(bucket, meta -> meta.withInventoryConfiguration(id, xml));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketInventoryConfiguration '{}' id='{}' failed", bucket, id, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> getBucketInventoryConfiguration(
+            final String bucket, final HttpRequest<?> request) {
+        try {
+            final var meta = bucketService.getBucketMetadata(bucket);
+            final var idOpt = request.getParameters().getFirst("id");
+            if (idOpt.isPresent()) {
+                final String xml = meta.inventoryConfigurations() != null
+                        ? meta.inventoryConfigurations().get(idOpt.get()) : null;
+                if (xml == null) {
+                    return HttpResponse.notFound(S3Xml.error("NoSuchConfiguration",
+                            "The specified configuration does not exist.", null));
+                }
+                return HttpResponse.ok(xml).contentType("application/xml");
+            }
+            return HttpResponse.ok(S3Xml.listBucketInventoryConfigurations(meta.inventoryConfigurations()))
+                    .contentType("application/xml");
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> deleteBucketInventoryConfiguration(
+            final String bucket, final HttpRequest<?> request) {
+        final String id = request.getParameters().getFirst("id").orElse(null);
+        if (id == null || id.isBlank()) {
+            return s3Error(S3Xml.error("InvalidArgument", "Query parameter 'id' is required.", "id"), 400);
+        }
+        try {
+            bucketService.updateBucket(bucket, meta -> meta.withInventoryConfiguration(id, null));
+            return HttpResponse.<String>status(HttpStatus.NO_CONTENT);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IOException ex) {
+            LOG.error("DeleteBucketInventoryConfiguration '{}' id='{}' failed", bucket, id, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> putBucketIntelligentTieringConfiguration(
+            final String bucket, final HttpRequest<?> request, final byte[] body) {
+        final String id = request.getParameters().getFirst("id").orElse(null);
+        if (id == null || id.isBlank()) {
+            return s3Error(S3Xml.error("InvalidArgument", "Query parameter 'id' is required.", "id"), 400);
+        }
+        try {
+            final String xml = BucketConfigParser.parseIntelligentTieringConfiguration(body);
+            bucketService.updateBucket(bucket, meta -> meta.withIntelligentTieringConfiguration(id, xml));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketIntelligentTieringConfiguration '{}' id='{}' failed", bucket, id, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> getBucketIntelligentTieringConfiguration(
+            final String bucket, final HttpRequest<?> request) {
+        try {
+            final var meta = bucketService.getBucketMetadata(bucket);
+            final var idOpt = request.getParameters().getFirst("id");
+            if (idOpt.isPresent()) {
+                final String xml = meta.intelligentTieringConfigs() != null
+                        ? meta.intelligentTieringConfigs().get(idOpt.get()) : null;
+                if (xml == null) {
+                    return HttpResponse.notFound(S3Xml.error("NoSuchConfiguration",
+                            "The specified configuration does not exist.", null));
+                }
+                return HttpResponse.ok(xml).contentType("application/xml");
+            }
+            return HttpResponse.ok(S3Xml.listBucketIntelligentTieringConfigurations(meta.intelligentTieringConfigs()))
+                    .contentType("application/xml");
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> deleteBucketIntelligentTieringConfiguration(
+            final String bucket, final HttpRequest<?> request) {
+        final String id = request.getParameters().getFirst("id").orElse(null);
+        if (id == null || id.isBlank()) {
+            return s3Error(S3Xml.error("InvalidArgument", "Query parameter 'id' is required.", "id"), 400);
+        }
+        try {
+            bucketService.updateBucket(bucket, meta -> meta.withIntelligentTieringConfiguration(id, null));
+            return HttpResponse.<String>status(HttpStatus.NO_CONTENT);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IOException ex) {
+            LOG.error("DeleteBucketIntelligentTieringConfiguration '{}' id='{}' failed", bucket, id, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> putBucketAbac(
+            final String bucket, final byte[] body) {
+        try {
+            final String xml = BucketConfigParser.parseAbacConfiguration(body);
+            bucketService.updateBucket(bucket, meta -> meta.withAbacXml(xml));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("PutBucketAbac '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> getBucketAbac(final String bucket) {
+        try {
+            final var meta = bucketService.getBucketMetadata(bucket);
+            if (meta.abacXml() == null) {
+                return HttpResponse.notFound(S3Xml.error("NoSuchConfiguration",
+                        "The bucket does not have an ABAC configuration.", null));
+            }
+            return HttpResponse.ok(meta.abacXml()).contentType("application/xml");
         } catch (final S3Exception ex) {
             return s3Error(ex);
         }

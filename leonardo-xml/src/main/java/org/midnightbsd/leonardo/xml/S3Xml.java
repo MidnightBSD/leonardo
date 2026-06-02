@@ -423,6 +423,65 @@ public final class S3Xml {
     }
 
     // -------------------------------------------------------------------------
+    // Phase 8 — analytics, metrics, inventory, intelligent-tiering, ABAC GET responses
+    // -------------------------------------------------------------------------
+
+    /** Strips a leading {@code <?xml...?>} processing instruction from a stored XML snippet. */
+    private static String stripXmlDeclaration(final String xml) {
+        if (xml == null) return "";
+        final String trimmed = xml.stripLeading();
+        if (trimmed.startsWith("<?xml")) {
+            final int end = trimmed.indexOf("?>");
+            return end >= 0 ? trimmed.substring(end + 2).stripLeading() : xml;
+        }
+        return xml;
+    }
+
+    private static String listConfigsXml(
+            final String listElement,
+            final Map<String, String> configs) {
+        final var sb = new StringBuilder(PREAMBLE);
+        sb.append("<").append(listElement).append(NS).append(">");
+        sb.append(t("IsTruncated", "false"));
+        if (configs != null) {
+            for (final String xml : configs.values()) {
+                sb.append(stripXmlDeclaration(xml));
+            }
+        }
+        sb.append("</").append(listElement).append(">");
+        return sb.toString();
+    }
+
+    /** Response body for ListBucketAnalyticsConfigurations. */
+    public static String listBucketAnalyticsConfigurations(final Map<String, String> configs) {
+        return listConfigsXml("ListBucketAnalyticsConfigurationResult", configs);
+    }
+
+    /** Response body for ListBucketMetricsConfigurations. */
+    public static String listBucketMetricsConfigurations(final Map<String, String> configs) {
+        return listConfigsXml("ListMetricsConfigurationsResult", configs);
+    }
+
+    /** Response body for ListBucketInventoryConfigurations. */
+    public static String listBucketInventoryConfigurations(final Map<String, String> configs) {
+        return listConfigsXml("ListInventoryConfigurationsResult", configs);
+    }
+
+    /** Response body for ListBucketIntelligentTieringConfigurations. */
+    public static String listBucketIntelligentTieringConfigurations(final Map<String, String> configs) {
+        return listConfigsXml("ListBucketIntelligentTieringConfigurationsResult", configs);
+    }
+
+    /**
+     * Response body for GetBucketAbac.
+     * Returns stored XML verbatim; callers should 404 if null.
+     */
+    public static String getBucketAbac(final String storedXml) {
+        return storedXml != null ? storedXml
+                : PREAMBLE + "<AbacConfiguration" + NS + "/>";
+    }
+
+    // -------------------------------------------------------------------------
     // Phase 4 — object configuration GET responses
     // -------------------------------------------------------------------------
 

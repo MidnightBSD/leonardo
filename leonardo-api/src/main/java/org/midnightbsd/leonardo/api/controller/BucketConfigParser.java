@@ -371,6 +371,45 @@ final class BucketConfigParser {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Phase 8 — analytics, metrics, inventory, intelligent-tiering, ABAC
+    // -------------------------------------------------------------------------
+
+    /** Parses {@code PutBucketAnalyticsConfiguration} body; validates XML and returns raw UTF-8 string. */
+    public static String parseAnalyticsConfiguration(final byte[] body) {
+        if (body == null || body.length == 0)
+            throw new IllegalArgumentException("AnalyticsConfiguration body must not be empty.");
+        return parseRawXml(body);
+    }
+
+    /** Parses {@code PutBucketMetricsConfiguration} body; validates XML and returns raw UTF-8 string. */
+    public static String parseMetricsConfiguration(final byte[] body) {
+        if (body == null || body.length == 0)
+            throw new IllegalArgumentException("MetricsConfiguration body must not be empty.");
+        return parseRawXml(body);
+    }
+
+    /** Parses {@code PutBucketInventoryConfiguration} body; validates XML and returns raw UTF-8 string. */
+    public static String parseInventoryConfiguration(final byte[] body) {
+        if (body == null || body.length == 0)
+            throw new IllegalArgumentException("InventoryConfiguration body must not be empty.");
+        return parseRawXml(body);
+    }
+
+    /** Parses {@code PutBucketIntelligentTieringConfiguration} body; validates XML and returns raw UTF-8 string. */
+    public static String parseIntelligentTieringConfiguration(final byte[] body) {
+        if (body == null || body.length == 0)
+            throw new IllegalArgumentException("IntelligentTieringConfiguration body must not be empty.");
+        return parseRawXml(body);
+    }
+
+    /** Parses {@code PutBucketAbac} body; validates XML and returns raw UTF-8 string. */
+    public static String parseAbacConfiguration(final byte[] body) {
+        if (body == null || body.length == 0)
+            throw new IllegalArgumentException("AbacConfiguration body must not be empty.");
+        return parseRawXml(body);
+    }
+
     /** Parses a {@code PutBucketLogging} request body, returning a {@link BucketMetadata.LoggingConfig}. */
     public static BucketMetadata.LoggingConfig parseLoggingConfig(final byte[] body) {
         if (body == null || body.length == 0) return null;

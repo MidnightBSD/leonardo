@@ -111,6 +111,11 @@ final class BucketMetadataTest {
                     null,
                     null,
                     null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
                     null
             );
         }
