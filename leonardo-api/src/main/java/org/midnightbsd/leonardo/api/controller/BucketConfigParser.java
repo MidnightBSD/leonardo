@@ -438,18 +438,45 @@ final class BucketConfigParser {
     }
 
     private static String buildMetadataTableGetResponseXml(final String tableBucketArn, final String tableName) {
-        final String ns = " xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"";
-        final StringBuilder sb = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        sb.append("<GetBucketMetadataTableConfigurationResult").append(ns).append(">");
-        sb.append("<MetadataTableConfigurationResult>");
-        sb.append("<S3TablesDestinationResult>");
-        if (tableBucketArn != null) sb.append("<TableBucketArn>").append(tableBucketArn).append("</TableBucketArn>");
-        if (tableName != null) sb.append("<TableName>").append(tableName).append("</TableName>");
-        sb.append("</S3TablesDestinationResult>");
-        sb.append("</MetadataTableConfigurationResult>");
-        sb.append("<Status>ENABLED</Status>");
-        sb.append("</GetBucketMetadataTableConfigurationResult>");
-        return sb.toString();
+        try {
+            final DocumentBuilderFactory dbf = DocumentBuilderFactory.newDefaultInstance();
+            dbf.setNamespaceAware(false);
+            final Document doc = dbf.newDocumentBuilder().newDocument();
+
+            final Element root = doc.createElement("GetBucketMetadataTableConfigurationResult");
+            root.setAttribute("xmlns", "http://s3.amazonaws.com/doc/2006-03-01/");
+            doc.appendChild(root);
+
+            final Element resultElem = doc.createElement("MetadataTableConfigurationResult");
+            root.appendChild(resultElem);
+            final Element destElem = doc.createElement("S3TablesDestinationResult");
+            resultElem.appendChild(destElem);
+            if (tableBucketArn != null) {
+                final Element arnElem = doc.createElement("TableBucketArn");
+                arnElem.setTextContent(tableBucketArn);
+                destElem.appendChild(arnElem);
+            }
+            if (tableName != null) {
+                final Element nameElem = doc.createElement("TableName");
+                nameElem.setTextContent(tableName);
+                destElem.appendChild(nameElem);
+            }
+
+            final Element statusElem = doc.createElement("Status");
+            statusElem.setTextContent("ENABLED");
+            root.appendChild(statusElem);
+
+            final javax.xml.transform.TransformerFactory tf = javax.xml.transform.TransformerFactory.newInstance();
+            final javax.xml.transform.Transformer t = tf.newTransformer();
+            t.setOutputProperty(javax.xml.transform.OutputKeys.ENCODING, "UTF-8");
+            t.setOutputProperty(javax.xml.transform.OutputKeys.OMIT_XML_DECLARATION, "no");
+            final java.io.StringWriter sw = new java.io.StringWriter();
+            t.transform(new javax.xml.transform.dom.DOMSource(doc),
+                        new javax.xml.transform.stream.StreamResult(sw));
+            return sw.toString();
+        } catch (final Exception ex) {
+            throw new IllegalStateException("Failed to build MetadataTableConfiguration response XML", ex);
+        }
     }
 
     /** Parses a {@code PutBucketLogging} request body, returning a {@link BucketMetadata.LoggingConfig}. */
