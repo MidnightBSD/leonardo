@@ -231,6 +231,9 @@ public final class BucketController {
         if (request.getParameters().contains("intelligent-tiering")) {
             return deleteBucketIntelligentTieringConfiguration(bucket, request);
         }
+        if (request.getParameters().contains("metadataTable")) {
+            return deleteBucketMetadataTableConfiguration(bucket);
+        }
 
         // DeleteBucket
         try {
@@ -354,6 +357,12 @@ public final class BucketController {
         if (request.getParameters().contains("abac")) {
             return getBucketAbac(bucket);
         }
+        if (request.getParameters().contains("metadataTable")) {
+            return getBucketMetadataTableConfiguration(bucket);
+        }
+        if (request.getParameters().contains("session")) {
+            return createSession(request);
+        }
 
         // ListObjectsV2 (list-type=2) or ListObjects v1
         final boolean isV2 = "2".equals(listType);
@@ -423,6 +432,9 @@ public final class BucketController {
             final HttpRequest<?> request) {
 
         final byte[] xmlBody = body.orElse(null);
+        if (request.getParameters().contains("metadataTable")) {
+            return putBucketMetadataTableConfiguration(bucket, xmlBody);
+        }
         if (!request.getParameters().contains("delete")) {
             return s3Error(S3Xml.error("MethodNotAllowed",
                     "The specified method is not allowed against this resource.", null), 405);
@@ -1441,6 +1453,51 @@ public final class BucketController {
         } catch (final S3Exception ex) {
             return s3Error(ex);
         }
+    }
+
+    // =========================================================================
+    // Phase 9 — metadata table configuration, session (stubs)
+    // =========================================================================
+
+    private HttpResponse<String> putBucketMetadataTableConfiguration(
+            final String bucket, final byte[] body) {
+        try {
+            final String xml = BucketConfigParser.parseMetadataTableConfigurationForStorage(body);
+            bucketService.updateBucket(bucket, meta -> meta.withMetadataTableConfigXml(xml));
+            return HttpResponse.<String>status(HttpStatus.OK);
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        } catch (final IllegalArgumentException ex) {
+            return s3Error(S3Xml.error("MalformedXML", ex.getMessage(), null), 400);
+        } catch (final IOException ex) {
+            LOG.error("CreateBucketMetadataTableConfiguration '{}' failed", bucket, ex);
+            return internalError();
+        }
+    }
+
+    private HttpResponse<String> getBucketMetadataTableConfiguration(final String bucket) {
+        try {
+            final var meta = bucketService.getBucketMetadata(bucket);
+            if (meta.metadataTableConfigXml() == null) {
+                return HttpResponse.notFound(S3Xml.error("NoSuchConfiguration",
+                        "The specified metadata table configuration does not exist.", null));
+            }
+            return HttpResponse.ok(meta.metadataTableConfigXml()).contentType("application/xml");
+        } catch (final S3Exception ex) {
+            return s3Error(ex);
+        }
+    }
+
+    private HttpResponse<String> deleteBucketMetadataTableConfiguration(final String bucket) {
+        return clearBucketConfig(bucket,
+                meta -> meta.withMetadataTableConfigXml(null),
+                "DeleteBucketMetadataTableConfiguration");
+    }
+
+    private HttpResponse<String> createSession(final HttpRequest<?> request) {
+        final String identity = request.getAttribute("s3.identity", String.class).orElse("UNKNOWN");
+        return HttpResponse.ok(S3Xml.createSessionResponse(identity))
+                .contentType("application/xml");
     }
 
     // =========================================================================

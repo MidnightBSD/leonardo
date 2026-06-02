@@ -482,6 +482,40 @@ public final class S3Xml {
     }
 
     // -------------------------------------------------------------------------
+    // Phase 9 — metadata table configuration, session, directory buckets
+    // -------------------------------------------------------------------------
+
+    /**
+     * Response body for GetBucketMetadataTableConfiguration.
+     * Returns stored XML verbatim; callers should 404 if null.
+     */
+    public static String getMetadataTableConfiguration(final String storedXml) {
+        return storedXml != null ? storedXml
+                : PREAMBLE + "<GetBucketMetadataTableConfigurationResult" + NS + "/>";
+    }
+
+    /** Response body for CreateSession. Returns stub session credentials with far-future expiration. */
+    public static String createSessionResponse(final String accessKeyId) {
+        final var sb = new StringBuilder(PREAMBLE);
+        sb.append("<CreateSessionResponse").append(NS).append(">");
+        sb.append("<Credentials>");
+        sb.append(t("AccessKeyId", accessKeyId));
+        sb.append(t("SecretAccessKey", "StubSecretKeyForLeonardoSession12345678"));
+        sb.append(t("SessionToken", "StubSessionToken//////////LeonardoLocalSession"));
+        sb.append(t("Expiration", "2099-12-31T23:59:59.000Z"));
+        sb.append("</Credentials>");
+        sb.append("</CreateSessionResponse>");
+        return sb.toString();
+    }
+
+    /** Response body for ListDirectoryBuckets — Leonardo has no directory buckets. */
+    public static String listDirectoryBuckets() {
+        return PREAMBLE + "<ListDirectoryBucketsResult" + NS + ">"
+                + t("Buckets", "")
+                + "</ListDirectoryBucketsResult>";
+    }
+
+    // -------------------------------------------------------------------------
     // Phase 4 — object configuration GET responses
     // -------------------------------------------------------------------------
 

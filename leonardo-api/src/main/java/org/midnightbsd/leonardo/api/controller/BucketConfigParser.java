@@ -410,6 +410,48 @@ final class BucketConfigParser {
         return parseRawXml(body);
     }
 
+    /**
+     * Parses a {@code CreateBucketMetadataTableConfiguration} request body.
+     * Extracts the {@code TableBucketArn} and {@code TableName} from the
+     * {@code S3TablesDestination} element and returns the XML in the GET response
+     * format ({@code GetBucketMetadataTableConfigurationResult}) so it can be stored
+     * and returned verbatim by {@code GetBucketMetadataTableConfiguration}.
+     */
+    public static String parseMetadataTableConfigurationForStorage(final byte[] body) {
+        if (body == null || body.length == 0)
+            throw new IllegalArgumentException("MetadataTableConfiguration body must not be empty.");
+        try {
+            final DocumentBuilderFactory f = DocumentBuilderFactory.newDefaultInstance();
+            f.setNamespaceAware(false);
+            f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            final Document doc = f.newDocumentBuilder().parse(new ByteArrayInputStream(body));
+            final Element root = doc.getDocumentElement();
+            final Element dest = firstElement(root, "S3TablesDestination");
+            final String arn = dest != null ? text(dest, "TableBucketArn") : null;
+            final String name = dest != null ? text(dest, "TableName") : null;
+            return buildMetadataTableGetResponseXml(arn, name);
+        } catch (final IllegalArgumentException ex) {
+            throw ex;
+        } catch (final Exception ex) {
+            throw new IllegalArgumentException("Malformed MetadataTableConfiguration XML: " + ex.getMessage(), ex);
+        }
+    }
+
+    private static String buildMetadataTableGetResponseXml(final String tableBucketArn, final String tableName) {
+        final String ns = " xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"";
+        final StringBuilder sb = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        sb.append("<GetBucketMetadataTableConfigurationResult").append(ns).append(">");
+        sb.append("<MetadataTableConfigurationResult>");
+        sb.append("<S3TablesDestinationResult>");
+        if (tableBucketArn != null) sb.append("<TableBucketArn>").append(tableBucketArn).append("</TableBucketArn>");
+        if (tableName != null) sb.append("<TableName>").append(tableName).append("</TableName>");
+        sb.append("</S3TablesDestinationResult>");
+        sb.append("</MetadataTableConfigurationResult>");
+        sb.append("<Status>ENABLED</Status>");
+        sb.append("</GetBucketMetadataTableConfigurationResult>");
+        return sb.toString();
+    }
+
     /** Parses a {@code PutBucketLogging} request body, returning a {@link BucketMetadata.LoggingConfig}. */
     public static BucketMetadata.LoggingConfig parseLoggingConfig(final byte[] body) {
         if (body == null || body.length == 0) return null;

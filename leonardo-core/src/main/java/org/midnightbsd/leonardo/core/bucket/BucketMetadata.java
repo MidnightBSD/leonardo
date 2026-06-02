@@ -66,7 +66,10 @@ public record BucketMetadata(
         Map<String, String> metricsConfigurations,     // id → raw XML, or null
         Map<String, String> inventoryConfigurations,   // id → raw XML, or null
         Map<String, String> intelligentTieringConfigs, // id → raw XML, or null
-        String abacXml                                 // raw XML from PutBucketAbac, or null
+        String abacXml,                                 // raw XML from PutBucketAbac, or null
+
+        // Phase 9 — metadata table, session, directory buckets (stubs)
+        String metadataTableConfigXml                  // raw XML from CreateBucketMetadataTableConfiguration, or null
 ) {
     public enum CallerObjectIdsMode {
         @JsonProperty("required") REQUIRED,
@@ -133,7 +136,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withCors(final CorsConfig newCors) {
@@ -143,7 +147,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withTags(final Map<String, String> newTags) {
@@ -153,7 +158,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withVersioning(final VersioningConfig newVersioning) {
@@ -163,7 +169,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withWebsite(final WebsiteConfig newWebsite) {
@@ -173,7 +180,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withLifecycle(final LifecycleConfig newLifecycle) {
@@ -183,7 +191,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withPolicyJson(final String newPolicyJson) {
@@ -193,7 +202,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withPublicAccessBlock(final PublicAccessBlockConfig newPab) {
@@ -203,7 +213,8 @@ public record BucketMetadata(
                 rateLimit, newPab, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withRequestPayer(final String newRequestPayer) {
@@ -213,7 +224,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, newRequestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withObjectLock(final ObjectLockConfig newObjectLock) {
@@ -223,7 +235,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withLoggingConfig(final LoggingConfig newLogging) {
@@ -233,7 +246,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 newLogging, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withNotificationConfigXml(final String newXml) {
@@ -243,7 +257,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, newXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withReplicationConfigXml(final String newXml) {
@@ -253,7 +268,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, newXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withSseConfigXml(final String newXml) {
@@ -263,7 +279,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 newXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withOwnershipControlsXml(final String newXml) {
@@ -273,7 +290,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, newXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withAccelerateStatus(final String newStatus) {
@@ -283,7 +301,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, newStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withAnalyticsConfiguration(final String id, final String xml) {
@@ -294,7 +313,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                updated, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                updated, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withMetricsConfiguration(final String id, final String xml) {
@@ -305,7 +325,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, updated, inventoryConfigurations, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, updated, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withInventoryConfiguration(final String id, final String xml) {
@@ -316,7 +337,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, updated, intelligentTieringConfigs, abacXml);
+                analyticsConfigurations, metricsConfigurations, updated, intelligentTieringConfigs, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withIntelligentTieringConfiguration(final String id, final String xml) {
@@ -327,7 +349,8 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, updated, abacXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, updated, abacXml,
+                metadataTableConfigXml);
     }
 
     public BucketMetadata withAbacXml(final String newXml) {
@@ -337,7 +360,19 @@ public record BucketMetadata(
                 rateLimit, publicAccessBlock, requestPayer,
                 loggingConfig, notificationConfigXml, replicationConfigXml,
                 sseConfigXml, ownershipControlsXml, accelerateStatus,
-                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, newXml);
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, newXml,
+                metadataTableConfigXml);
+    }
+
+    public BucketMetadata withMetadataTableConfigXml(final String newXml) {
+        return new BucketMetadata(name, createdAt, owner, region, versioning, acl, tags,
+                lifecycle, cors, website, encryption, objectLock, policyJson,
+                callerObjectIds, fsyncOnWrite, pathQuotaBytes, immutable, defaultContentType,
+                rateLimit, publicAccessBlock, requestPayer,
+                loggingConfig, notificationConfigXml, replicationConfigXml,
+                sseConfigXml, ownershipControlsXml, accelerateStatus,
+                analyticsConfigurations, metricsConfigurations, inventoryConfigurations, intelligentTieringConfigs, abacXml,
+                newXml);
     }
 
     private static Map<String, String> buildUpdatedMap(

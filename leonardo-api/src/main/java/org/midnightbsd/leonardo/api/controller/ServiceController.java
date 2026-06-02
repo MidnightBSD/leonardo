@@ -47,6 +47,10 @@ public final class ServiceController {
     @Get
     @Produces(MediaType.APPLICATION_XML)
     public HttpResponse<String> listBuckets(final HttpRequest<?> request) {
+        if (request.getParameters().contains("max-directory-buckets")) {
+            return HttpResponse.ok(S3Xml.listDirectoryBuckets())
+                    .contentType(MediaType.APPLICATION_XML);
+        }
         final String identity = request.getAttribute("s3.identity", String.class)
                 .orElse("anonymous");
         try {
