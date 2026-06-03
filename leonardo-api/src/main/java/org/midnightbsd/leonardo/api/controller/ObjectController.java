@@ -146,6 +146,10 @@ public final class ObjectController {
         if (request.getParameters().contains("retention")) {
             return handleGetObjectRetention(bucket, key);
         }
+        if (request.getParameters().contains("torrent")) {
+            return BucketController.s3Error(S3Xml.error("NotImplemented",
+                    "GetObjectTorrent is not supported by this server.", null), 501);
+        }
         try {
             final ObjectService.GetResult result = versionId.isEmpty()
                     ? objectService.getObject(bucket, key)
@@ -455,6 +459,10 @@ public final class ObjectController {
         }
         if (request.getParameters().contains("rename")) {
             return handleRenameObject(bucket, key, request);
+        }
+        if (request.getParameters().contains("select")) {
+            return BucketController.s3Error(S3Xml.error("NotImplemented",
+                    "SelectObjectContent is not supported by this server.", null), 501);
         }
         return BucketController.s3Error(S3Xml.error("MethodNotAllowed",
                 "The specified method is not allowed against this resource.", null), 405);

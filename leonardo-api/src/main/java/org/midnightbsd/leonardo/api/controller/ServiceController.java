@@ -16,6 +16,7 @@ import io.micronaut.http.HttpResponse;
 import io.micronaut.http.MediaType;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Get;
+import io.micronaut.http.annotation.Post;
 import io.micronaut.http.annotation.Produces;
 import org.midnightbsd.leonardo.core.S3Exception;
 import org.midnightbsd.leonardo.core.bucket.BucketMetadata;
@@ -71,5 +72,12 @@ public final class ServiceController {
         return HttpResponse.<String>status(io.micronaut.http.HttpStatus.valueOf(status))
                 .contentType(MediaType.APPLICATION_XML)
                 .body(xml);
+    }
+
+    @Post("/WriteGetObjectResponse")
+    @Produces(MediaType.APPLICATION_XML)
+    public HttpResponse<String> writeGetObjectResponse() {
+        return s3Error(S3Xml.error("NotImplemented",
+                "WriteGetObjectResponse requires S3 Object Lambda, which is not supported by this server.", null), 501);
     }
 }
