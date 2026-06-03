@@ -35,6 +35,16 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: ${{ runner.os }}-gradle-
 
+      - name: Set up conformance test directories
+        run: |
+          mkdir -p /tmp/leonardo-conformance/tmp \
+                   /tmp/leonardo-conformance/config \
+                   /tmp/leonardo-conformance/logs \
+                   /tmp/leonardo-conformance/buckets
+          printf 'keys:\n  - access_key: AKIACONFORMANCE00001\n    secret_key: ConformanceTestSecretKey123456789012345\n    identity: conformance-test-user\n    enabled: true\n' \
+            > /tmp/leonardo-conformance/config/api-keys.yaml
+          chmod 0600 /tmp/leonardo-conformance/config/api-keys.yaml
+
       - name: Build & test
         run: ./gradlew --no-daemon build
 
@@ -67,6 +77,13 @@ jobs:
             sudo /usr/sbin/pkg install -y openjdk21
             export JAVA_HOME=/usr/local/openjdk21
             export PATH="$JAVA_HOME/bin:$PATH"
+            mkdir -p /tmp/leonardo-conformance/tmp \
+                     /tmp/leonardo-conformance/config \
+                     /tmp/leonardo-conformance/logs \
+                     /tmp/leonardo-conformance/buckets
+            printf 'keys:\n  - access_key: AKIACONFORMANCE00001\n    secret_key: ConformanceTestSecretKey123456789012345\n    identity: conformance-test-user\n    enabled: true\n' \
+              > /tmp/leonardo-conformance/config/api-keys.yaml
+            chmod 0600 /tmp/leonardo-conformance/config/api-keys.yaml
             ./gradlew --no-daemon -g .gradle build
 
       - name: Upload test reports
