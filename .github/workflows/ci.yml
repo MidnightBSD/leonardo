@@ -116,6 +116,13 @@ jobs:
             sudo /usr/sbin/mport install openjdk21-bin ||  true
             export JAVA_HOME=/usr/local/openjdk21
             export PATH="$JAVA_HOME/bin:$PATH"
+            mkdir -p /tmp/leonardo-conformance/tmp \
+                     /tmp/leonardo-conformance/config \
+                     /tmp/leonardo-conformance/logs \
+                     /tmp/leonardo-conformance/buckets
+            printf 'keys:\n  - access_key: AKIACONFORMANCE00001\n    secret_key: ConformanceTestSecretKey123456789012345\n    identity: conformance-test-user\n    enabled: true\n' \
+              > /tmp/leonardo-conformance/config/api-keys.yaml
+            chmod 0600 /tmp/leonardo-conformance/config/api-keys.yaml
             ./gradlew --no-daemon -g .gradle build
 
       - name: Upload test reports
