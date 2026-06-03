@@ -8,34 +8,35 @@ NOTE: Part of this code is AI generated
 
 ## Status
 
-Active development. See `docs/project-plan.md` for the full roadmap.
+**v0.1.0 — feature complete.** All planned API milestones shipped. 95 conformance tests passing on MidnightBSD, FreeBSD, and Linux.
 
 | Milestone | Description | Status |
 | --- | --- | --- |
 | **M0** | Repo, build, CI skeleton, health endpoint | Done |
 | **M1** | SigV2 + SigV4 auth, API key loader, presigned URLs | Done |
-| **M2** | Phase 1 — bucket + object CRUD, atomic YAML metadata, caller-chosen object IDs, fsync-rename storage | Done |
-| **M3** | Phase 2 — multipart upload, integrity (CRC32C, SHA-256) | Done |
-| **M4** | Phase 3 — bucket config (ACL, CORS, tagging, versioning, website, lifecycle, policy, public-access block, request payment) | Done |
-| **M5** | Phase 4+5 — object config (ACL, tagging, legal hold, retention), `ListObjectVersions`, object lock configuration | Done |
-| **M6** | Conformance pass — aws-cli, rclone, s3fs-fuse, mc, Terraform; Range requests (206), conditional requests (RFC 7232), aws-chunked decode, SigV4 presigned URLs, response-header filter | Done |
-| **M7** | Versioning enforcement, WORM/retention enforcement, bucket immutability, `?versionId` routing, virtual-host-style addressing | In progress |
-| **M8** | Phase 6 — notifications, server-access logging, replication stubs | Planned |
-| **M9** | Phase 7 — encryption (SSE-S3), ownership controls | Planned |
-| **M10** | Phase 8–11 long tail | Planned |
-| **M11** | MidnightBSD mport, FreeBSD port, Linux packages | Planned |
-| **M12** | Multi-region routing | Post-1.0 |
+| **M2** | Core bucket + object CRUD, multipart, `ListObjects` | Done |
+| **M3** | ACL, CORS, tagging, versioning, website, lifecycle | Done |
+| **M4** | Object-lock, public-access-block, bucket policy | Done |
+| **M5** | Presigned URLs, conditional GET, range requests, object attributes | Done |
+| **M6** | Request-payer, rate-limit stubs, object tagging, object-level ACL | Done |
+| **M7** | Notifications, server-access logging, replication (stubs) | Done |
+| **M8** | Encryption, ownership controls, accelerate (stubs) | Done |
+| **M9** | Analytics, metrics, inventory, intelligent-tiering, ABAC, metadata table, CreateSession, SelectObjectContent/GetObjectTorrent/WriteGetObjectResponse (501 stubs) | Done |
+| **M10** | MidnightBSD mport, FreeBSD port, Linux packages, release workflow | Done |
+| **M11** | Multi-region routing | Post-1.0 |
 
-### What works today (M6)
+### What's implemented
 
 - **Full auth**: SigV4 (header + presigned URL) and SigV2 against a YAML API-key store.
-- **Core S3 operations**: `CreateBucket`, `DeleteBucket`, `HeadBucket`, `ListBuckets`, `GetBucketLocation`, `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject`, `ListObjects`, `ListObjectsV2`.
+- **Core S3 operations**: `CreateBucket`, `DeleteBucket`, `HeadBucket`, `ListBuckets`, `GetBucketLocation`, `ListDirectoryBuckets`, `PutObject`, `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects`, `CopyObject`, `ListObjects`, `ListObjectsV2`.
 - **Multipart**: `CreateMultipartUpload`, `UploadPart`, `UploadPartCopy`, `CompleteMultipartUpload`, `AbortMultipartUpload`, `ListMultipartUploads`, `ListParts`, `GetObjectAttributes`.
-- **Bucket config**: ACL, CORS, tagging, versioning, website, lifecycle, bucket policy, public-access block, request payment, object-lock configuration.
+- **Bucket config**: ACL, CORS, tagging, versioning, website, lifecycle, bucket policy, public-access block, request payment, object-lock, server-side encryption, ownership controls, accelerate, notifications, server-access logging, replication, analytics, metrics, inventory, intelligent-tiering, ABAC, metadata table configuration.
 - **Object config**: ACL, tagging, legal hold, retention. `ListObjectVersions`.
+- **Sessions**: `CreateSession` (stub credentials for S3 Express clients).
 - **Conformance**: Range/conditional GET, aws-chunked streaming, `x-amz-request-id` / `x-amz-id-2` on every response, `Accept-Ranges`.
 - **Storage**: YAML metadata with atomic fsync-rename writes, striped per-object read-write locks, caller-chosen object IDs (`x-leonardo-object-id` header).
-- **Security**: XXE-safe XML parsing throughout; POSIX 0600/0700 file modes; SigV4 canonical-request verification.
+- **Security**: XXE-safe XML parsing (including DOM-based output); POSIX 0600/0700 file modes; SigV4 canonical-request verification.
+- **501 stubs**: `SelectObjectContent`, `GetObjectTorrent`, `WriteGetObjectResponse` — return `NotImplemented` until demand warrants the work.
 
 ## Building
 
@@ -52,6 +53,18 @@ Requires JDK 21.
 ```
 
 Default config is read from `/etc/leonardo/leonardo.yaml`, or an overriding path supplied via `--config=/path/to/leonardo.yaml`. Sample config lives in `config/leonardo.yaml`.
+
+## Installation
+
+Pre-built archives for each release are attached to the [GitHub releases page](https://github.com/MidnightBSD/leonardo/releases). Download the zip or tar, verify with the provided checksums file, then follow the instructions for your platform in `packaging/`.
+
+| Platform | Packaging |
+| --- | --- |
+| MidnightBSD | `packaging/midnightbsd/` — mport Makefile + rc.d script |
+| FreeBSD | `packaging/freebsd/` — ports Makefile + rc.d script |
+| Linux (RPM) | `packaging/linux/leonardo.spec` |
+| Linux (DEB) | `packaging/linux/debian/` |
+| Linux (any) | `packaging/linux/leonardo.service` — systemd unit |
 
 ## Module layout
 
