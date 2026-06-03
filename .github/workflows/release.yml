@@ -1,0 +1,107 @@
+# Copyright 2026 The Leonardo Authors.
+# Licensed under the Apache License, Version 2.0.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      - name: Set up conformance test directories
+        run: |
+          mkdir -p /tmp/leonardo-conformance/tmp \
+                   /tmp/leonardo-conformance/config \
+                   /tmp/leonardo-conformance/logs \
+                   /tmp/leonardo-conformance/buckets
+          printf 'keys:\n  - access_key: AKIACONFORMANCE00001\n    secret_key: ConformanceTestSecretKey123456789012345\n    identity: conformance-test-user\n    enabled: true\n' \
+            > /tmp/leonardo-conformance/config/api-keys.yaml
+          chmod 0600 /tmp/leonardo-conformance/config/api-keys.yaml
+
+      - name: Build and test
+        run: ./gradlew --no-daemon build
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build distribution archives
+        run: ./gradlew --no-daemon :leonardo-app:distZip :leonardo-app:distTar
+
+      - name: Create checksums
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        working-directory: leonardo-app/build/distributions
+        run: |
+          sha256sum "leonardo-${VERSION}.zip" \
+                    "leonardo-${VERSION}.tar" \
+            > "leonardo-${VERSION}-checksums.txt"
+
+      # To enable GPG signing, set the GPG_PRIVATE_KEY and GPG_PASSPHRASE
+      # repository secrets and uncomment the steps below.
+      #
+      # - name: Import GPG key
+      #   uses: crazy-max/ghaction-import-gpg@v6
+      #   with:
+      #     gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+      #     passphrase: ${{ secrets.GPG_PASSPHRASE }}
+      #
+      # - name: Sign release artifacts
+      #   env:
+      #     VERSION: ${{ steps.version.outputs.VERSION }}
+      #   working-directory: leonardo-app/build/distributions
+      #   run: |
+      #     gpg --batch --detach-sign --armor "leonardo-${VERSION}.zip"
+      #     gpg --batch --detach-sign --armor "leonardo-${VERSION}.tar"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Leonardo ${{ steps.version.outputs.VERSION }}
+          body: |
+            ## Leonardo ${{ steps.version.outputs.VERSION }}
+
+            S3-compatible object storage server.
+
+            ### Installation
+
+            Download the archive for your platform, extract it, and follow
+            the instructions in `packaging/` for your OS.
+
+            **Verify the download:**
+            ```
+            sha256sum -c leonardo-${{ steps.version.outputs.VERSION }}-checksums.txt
+            ```
+          files: |
+            leonardo-app/build/distributions/leonardo-${{ steps.version.outputs.VERSION }}.zip
+            leonardo-app/build/distributions/leonardo-${{ steps.version.outputs.VERSION }}.tar
+            leonardo-app/build/distributions/leonardo-${{ steps.version.outputs.VERSION }}-checksums.txt
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

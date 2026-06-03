@@ -1,0 +1,10 @@
+bin/leonardo
+etc/leonardo/
+etc/leonardo/api-keys.yaml.sample
+etc/leonardo/leonardo.yaml.sample
+@sample etc/leonardo/api-keys.yaml.sample
+@sample etc/leonardo/leonardo.yaml.sample
+share/java/leonardo/
+share/java/leonardo/lib/
+@dir(leonardo,leonardo,0750) /var/leonardo
+@dir(leonardo,leonardo,0750) /var/log/leonardo

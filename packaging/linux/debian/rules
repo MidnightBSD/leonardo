@@ -1,0 +1,22 @@
+#!/usr/bin/make -f
+export DH_VERBOSE = 1
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	# Distribution zip built externally; see README for build instructions
+
+override_dh_auto_install:
+	install -d debian/leonardo/usr/share/java/leonardo/lib
+	cp leonardo-*/lib/*.jar debian/leonardo/usr/share/java/leonardo/lib/
+	install -d debian/leonardo/usr/bin
+	install -m 0755 leonardo-*/bin/leonardo debian/leonardo/usr/bin/leonardo
+	install -d debian/leonardo/etc/leonardo
+	install -m 0644 packaging/linux/leonardo.yaml.sample \
+	    debian/leonardo/etc/leonardo/leonardo.yaml.sample
+	install -m 0600 packaging/linux/api-keys.yaml.sample \
+	    debian/leonardo/etc/leonardo/api-keys.yaml.sample
+	install -d debian/leonardo/lib/systemd/system
+	install -m 0644 packaging/linux/leonardo.service \
+	    debian/leonardo/lib/systemd/system/leonardo.service

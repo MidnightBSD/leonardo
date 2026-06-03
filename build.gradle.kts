@@ -27,7 +27,7 @@ val awsSdkVersion by extra("2.29.43")
 
 allprojects {
     group = "org.midnightbsd.leonardo"
-    version = "0.1.0-SNAPSHOT"
+    version = "0.1.0"
 }
 
 subprojects {

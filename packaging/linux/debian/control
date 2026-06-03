@@ -1,0 +1,17 @@
+Source: leonardo
+Section: net
+Priority: optional
+Maintainer: Lucas Holt <luke@foolishgames.com>
+Build-Depends: debhelper-compat (= 13), default-jdk-headless (>= 21)
+Standards-Version: 4.6.2
+Homepage: https://github.com/MidnightBSD/leonardo
+Rules-Requires-Root: no
+
+Package: leonardo
+Architecture: all
+Depends: ${misc:Depends}, default-jre-headless (>= 21)
+Description: S3-compatible object storage server
+ Leonardo turns a POSIX filesystem directory into an S3-compatible
+ endpoint. It implements the AWS S3 REST API including buckets, objects,
+ multipart uploads, versioning, object locking, lifecycle policies, ACLs,
+ presigned URLs, and SigV4/SigV2 authentication.

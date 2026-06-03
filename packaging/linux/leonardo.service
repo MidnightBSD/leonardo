@@ -1,0 +1,32 @@
+[Unit]
+Description=Leonardo S3-compatible object storage server
+Documentation=https://github.com/MidnightBSD/leonardo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=leonardo
+Group=leonardo
+WorkingDirectory=/var/lib/leonardo
+
+Environment="JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64"
+Environment="LEONARDO_OPTS="
+
+ExecStart=/usr/lib/jvm/java-21-openjdk-amd64/bin/java \
+    $LEONARDO_OPTS \
+    -cp /usr/share/java/leonardo/lib/* \
+    org.midnightbsd.leonardo.app.LeonardoApplication
+
+Restart=on-failure
+RestartSec=5s
+
+# Hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/leonardo /var/log/leonardo
+
+[Install]
+WantedBy=multi-user.target

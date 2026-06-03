@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+case "$1" in
+    remove|purge)
+        if [ -x /usr/bin/deb-systemd-invoke ]; then
+            deb-systemd-invoke stop leonardo.service || true
+        fi
+        ;;
+esac
+#DEBHELPER#

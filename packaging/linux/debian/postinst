@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+case "$1" in
+    configure)
+        getent group leonardo >/dev/null || addgroup --system leonardo
+        getent passwd leonardo >/dev/null || \
+            adduser --system --ingroup leonardo --home /var/lib/leonardo \
+                    --no-create-home --shell /usr/sbin/nologin leonardo
+        install -d -o leonardo -g leonardo -m 0750 /var/lib/leonardo
+        install -d -o leonardo -g leonardo -m 0750 /var/log/leonardo
+        ;;
+esac
+#DEBHELPER#
