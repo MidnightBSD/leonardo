@@ -6,11 +6,11 @@ CATEGORIES=	net
 MASTER_SITES=	https://github.com/MidnightBSD/leonardo/releases/download/v${PORTVERSION}/
 DISTFILES=	leonardo-${PORTVERSION}.tar${EXTRACT_SUFX}
 
-MAINTAINER=	luke@foolishgames.com
+MAINTAINER=	ports@MidnightBSD.org
 COMMENT=	S3-compatible object storage server
 WWW=		https://github.com/MidnightBSD/leonardo
 
-LICENSE=	APACHE20
+LICENSE=	Apache-2.0
 
 BUILD_DEPENDS=	${JAVA_HOME}/bin/java:java/openjdk21
 RUN_DEPENDS=	${JAVA_HOME}/bin/java:java/openjdk21
@@ -26,16 +26,16 @@ NO_ARCH=	yes
 NO_BUILD=	yes
 
 do-install:
-	${MKDIR} ${STAGEDIR}${PREFIX}/share/java/leonardo/lib
+	${MKDIR} ${PREFIX}/share/java/leonardo/lib
 	${INSTALL_DATA} ${WRKSRC}/lib/*.jar \
-		${STAGEDIR}${PREFIX}/share/java/leonardo/lib/
+		${PREFIX}/share/java/leonardo/lib/
 	${INSTALL_SCRIPT} ${WRKSRC}/bin/leonardo \
-		${STAGEDIR}${PREFIX}/bin/leonardo
-	${MKDIR} ${STAGEDIR}${PREFIX}/etc/leonardo
+		${PREFIX}/bin/leonardo
+	${MKDIR} ${PREFIX}/etc/leonardo
 	${INSTALL_DATA} ${FILESDIR}/leonardo.yaml.sample \
-		${STAGEDIR}${PREFIX}/etc/leonardo/leonardo.yaml.sample
+		${PREFIX}/etc/leonardo/leonardo.yaml.sample
 	${INSTALL_DATA} ${FILESDIR}/api-keys.yaml.sample \
-		${STAGEDIR}${PREFIX}/etc/leonardo/api-keys.yaml.sample
+		${PREFIX}/etc/leonardo/api-keys.yaml.sample
 
 post-install:
 	# mport install may return non-zero even on success (mport 4.0.4 bug);
