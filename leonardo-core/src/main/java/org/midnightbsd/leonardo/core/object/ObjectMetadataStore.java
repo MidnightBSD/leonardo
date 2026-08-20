@@ -266,7 +266,11 @@ public final class ObjectMetadataStore {
         for (final ObjectMetadata meta : all) {
             final String key = meta.key();
 
-            if (keyMarker != null && !keyMarker.isEmpty() && key.compareTo(keyMarker) <= 0) {
+            if (keyMarker != null && !keyMarker.isEmpty() && key.compareTo(keyMarker) < 0) {
+                continue;
+            }
+            if (keyMarker != null && key.equals(keyMarker)
+                    && (versionIdMarker == null || versionIdMarker.isEmpty())) {
                 continue;
             }
             if (prefix != null && !prefix.isEmpty() && !key.startsWith(prefix)) {
@@ -283,13 +287,9 @@ public final class ObjectMetadataStore {
                 }
             }
 
-            // Current (latest) version (or delete marker)
-            if (versions.size() >= limit) {
-                truncated = true;
-                break;
-            }
             final boolean isMarker = meta.objectId() == null || meta.objectId().isEmpty();
-            versions.add(new VersionEntry(key, meta.versionId(),
+            final var entries = new ArrayList<VersionEntry>();
+            entries.add(new VersionEntry(key, meta.versionId(),
                     isMarker ? "" : meta.etag(),
                     isMarker ? 0 : meta.size(),
                     isMarker, true, meta.lastModified(),
@@ -300,13 +300,28 @@ public final class ObjectMetadataStore {
                 final var hist = new ArrayList<>(meta.versions());
                 hist.sort(Comparator.comparing(ObjectMetadata.ObjectVersion::createdAt).reversed());
                 for (final ObjectMetadata.ObjectVersion v : hist) {
-                    if (versions.size() >= limit) {
-                        truncated = true;
-                        break outer;
-                    }
-                    versions.add(new VersionEntry(key, v.versionId(), v.etag(), v.size(),
+                    entries.add(new VersionEntry(key, v.versionId(), v.etag(), v.size(),
                             v.deleteMarker(), false, v.createdAt(), "STANDARD"));
                 }
+            }
+
+            boolean resumeAfterMarker = key.equals(keyMarker);
+            for (final VersionEntry entry : entries) {
+                if (resumeAfterMarker) {
+                    // ListObjectVersions uses the key/version pair as one cursor.  Do not
+                    // skip this key wholesale: later versions of the same key must remain
+                    // reachable when a page ended in the middle of its version history.
+                    if (!versionIdMarker.equals(entry.versionId())) {
+                        continue;
+                    }
+                    resumeAfterMarker = false;
+                    continue;
+                }
+                if (versions.size() >= limit) {
+                    truncated = true;
+                    break outer;
+                }
+                versions.add(entry);
             }
         }
 

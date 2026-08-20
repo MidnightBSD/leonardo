@@ -241,24 +241,28 @@ public final class ObjectService {
         try {
             final var maybeOld = metaStore.read(bucket, key);
 
-            if (versioningEnabled && maybeOld.isPresent()) {
+            if (versioningEnabled) {
                 // Create a delete marker instead of physically deleting
                 final String markerVersionId = Ulid.generate();
                 final Instant now = Instant.now();
-                final ObjectMetadata prev = maybeOld.get();
-                final var histEntry = new ObjectMetadata.ObjectVersion(
-                        prev.versionId() != null ? prev.versionId() : "null",
-                        prev.objectId(), prev.size(), prev.etag(),
-                        false, prev.lastModified());
                 final var combined = new ArrayList<ObjectMetadata.ObjectVersion>();
-                combined.add(histEntry);
-                if (prev.versions() != null) combined.addAll(prev.versions());
+                if (maybeOld.isPresent()) {
+                    final ObjectMetadata prev = maybeOld.get();
+                    final var histEntry = new ObjectMetadata.ObjectVersion(
+                            prev.versionId() != null ? prev.versionId() : "null",
+                            prev.objectId(), prev.size(), prev.etag(),
+                            false, prev.lastModified());
+                    combined.add(histEntry);
+                    if (prev.versions() != null) combined.addAll(prev.versions());
+                }
 
-                // Write delete marker as the current "version"
+                // S3 requires a delete marker even when no live version exists.  The
+                // marker-only metadata is observable via ListObjectVersions and prevents
+                // a later write from making an earlier delete appear to have been ignored.
                 final ObjectMetadata marker = new ObjectMetadata(
                         key, "", 0, "", "",
                         now, now, "STANDARD",
-                        Collections.unmodifiableList(combined),
+                        combined.isEmpty() ? null : Collections.unmodifiableList(combined),
                         null, null, "private", false, null,
                         markerVersionId, null, null);
                 metaStore.write(bucket, marker);
