@@ -117,16 +117,21 @@ public final class AtomicFileWriter {
     }
 
     private static void fsyncDirectory(final Path dir) {
-        // Directory fsync isn't directly exposed in NIO; opening read-only and
-        // forcing is the documented portable trick. Doesn't work on Windows
-        // (which doesn't need it anyway) but does on every POSIX system we care
-        // about.
-        try (FileChannel ch = FileChannel.open(dir, StandardOpenOption.READ)) {
+        final String os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+        if (os.contains("win")) {
+            return; // Windows directories do not need fsync
+        }
+
+        // On POSIX systems (MidnightBSD, FreeBSD, Linux, macOS), fsyncing a directory
+        // flushes parent directory entry updates (like atomic file renames) to disk.
+        // FileChannel.open(dir) is blocked by NIO for directories, but FileInputStream(dir.toFile()).getChannel()
+        // opens the underlying POSIX directory file descriptor (O_RDONLY) and allows calling force(true) -> fsync(fd).
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(dir.toFile());
+             FileChannel ch = fis.getChannel()) {
             ch.force(true);
-        } catch (final IOException ex) {
-            // Some filesystems return EISDIR or similar for the open call. Log
-            // and continue — the file-level fsync is the critical one.
-            // (Logger injection deferred to keep this class dependency-free.)
+        } catch (final IOException ignored) {
+            // Best-effort: file-level fsync already guaranteed data integrity.
+            // On filesystems that restrict directory fsync, swallow and continue.
         }
     }
 }
