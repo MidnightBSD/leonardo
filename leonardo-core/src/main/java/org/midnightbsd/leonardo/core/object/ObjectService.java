@@ -241,37 +241,27 @@ public final class ObjectService {
         try {
             final var maybeOld = metaStore.read(bucket, key);
 
-            if (versioningEnabled) {
+            if (versioningEnabled && maybeOld.isPresent()) {
                 // Create a delete marker instead of physically deleting
                 final String markerVersionId = Ulid.generate();
                 final Instant now = Instant.now();
-                if (maybeOld.isPresent()) {
-                    final ObjectMetadata prev = maybeOld.get();
-                    final var histEntry = new ObjectMetadata.ObjectVersion(
-                            prev.versionId() != null ? prev.versionId() : "null",
-                            prev.objectId(), prev.size(), prev.etag(),
-                            false, prev.lastModified());
-                    final var combined = new ArrayList<ObjectMetadata.ObjectVersion>();
-                    combined.add(histEntry);
-                    if (prev.versions() != null) combined.addAll(prev.versions());
+                final ObjectMetadata prev = maybeOld.get();
+                final var histEntry = new ObjectMetadata.ObjectVersion(
+                        prev.versionId() != null ? prev.versionId() : "null",
+                        prev.objectId(), prev.size(), prev.etag(),
+                        false, prev.lastModified());
+                final var combined = new ArrayList<ObjectMetadata.ObjectVersion>();
+                combined.add(histEntry);
+                if (prev.versions() != null) combined.addAll(prev.versions());
 
-                    // Write delete marker as the current "version"
-                    final ObjectMetadata marker = new ObjectMetadata(
-                            key, "", 0, "", "",
-                            now, now, "STANDARD",
-                            Collections.unmodifiableList(combined),
-                            null, null, "private", false, null,
-                            markerVersionId, null, null);
-                    metaStore.write(bucket, marker);
-                } else {
-                    // Key doesn't exist; S3 still returns a delete marker on new keys
-                    final ObjectMetadata marker = new ObjectMetadata(
-                            key, "", 0, "", "",
-                            now, now, "STANDARD",
-                            null, null, null, "private", false, null,
-                            markerVersionId, null, null);
-                    metaStore.write(bucket, marker);
-                }
+                // Write delete marker as the current "version"
+                final ObjectMetadata marker = new ObjectMetadata(
+                        key, "", 0, "", "",
+                        now, now, "STANDARD",
+                        Collections.unmodifiableList(combined),
+                        null, null, "private", false, null,
+                        markerVersionId, null, null);
+                metaStore.write(bucket, marker);
                 return new DeleteObjectResult(markerVersionId);
             }
 
