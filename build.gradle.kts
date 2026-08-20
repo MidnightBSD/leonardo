@@ -14,8 +14,8 @@ plugins {
 
 // Versions shared across all modules. Bump here, propagates everywhere.
 val micronautVersion by extra("4.8.3")
-val nettyVersion by extra("4.1.115.Final")
-val jacksonVersion by extra("2.18.2")
+val nettyVersion by extra("4.1.128.Final")
+val jacksonVersion by extra("2.18.10")
 val snakeYamlVersion by extra("2.4")
 val slf4jVersion by extra("2.0.17")
 val logbackVersion by extra("1.5.17")
