@@ -15,6 +15,7 @@ import jakarta.inject.Singleton;
 import org.midnightbsd.leonardo.storage.layout.StorageLayout;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -58,6 +59,34 @@ public final class PartStore {
             }
         });
         return ObjectPayloadStore.md5Hex(data);
+    }
+
+    /** Streams a part directly to its temporary file and calculates its ETag. */
+    public ObjectPayloadStore.WriteResult write(
+            final String uploadId, final int partNumber, final InputStream data) throws IOException {
+        final Path target = partPath(uploadId, partNumber);
+        final java.security.MessageDigest digest;
+        try {
+            digest = java.security.MessageDigest.getInstance("MD5");
+        } catch (final java.security.NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("MD5 unavailable", ex);
+        }
+        final long[] size = {0};
+        writer.write(target, out -> {
+            try {
+                final byte[] buffer = new byte[8192];
+                int read;
+                while ((read = data.read(buffer)) != -1) {
+                    out.write(buffer, 0, read);
+                    digest.update(buffer, 0, read);
+                    size[0] += read;
+                }
+            } catch (final IOException ex) {
+                throw new UncheckedIOException(ex);
+            }
+        });
+        return new ObjectPayloadStore.WriteResult(
+                java.util.HexFormat.of().formatHex(digest.digest()), size[0]);
     }
 
     /** Reads all bytes of the stored part. */

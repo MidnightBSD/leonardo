@@ -39,6 +39,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.Optional;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -67,6 +68,7 @@ import java.util.Map;
 public final class ObjectController {
 
     static final String CALLER_OBJECT_ID_HEADER = "x-leonardo-object-id";
+    private static final int MAX_CONTROL_BODY_BYTES = 10 * 1024 * 1024;
 
     private static final Logger LOG = LoggerFactory.getLogger(ObjectController.class);
     private static final DateTimeFormatter RFC1123 =
@@ -265,21 +267,20 @@ public final class ObjectController {
                 final String bypassGovernanceRetention,
             @Header(value = "content-encoding", defaultValue = "") final String contentEncoding,
             @Header(value = "x-amz-content-sha256", defaultValue = "") final String payloadHash,
-            @Body final Optional<byte[]> body,
+            @Body final InputStream body,
             final HttpRequest<?> request) {
-        final byte[] rawBody = body.orElse(null);
         // Sub-resource dispatches before UploadPart check
         if (request.getParameters().contains("acl")) {
-            return handlePutObjectAcl(bucket, key, rawBody, cannedAcl);
+            return handlePutObjectAcl(bucket, key, readControlBody(body), cannedAcl);
         }
         if (request.getParameters().contains("tagging")) {
-            return handlePutObjectTagging(bucket, key, rawBody);
+            return handlePutObjectTagging(bucket, key, readControlBody(body));
         }
         if (request.getParameters().contains("legal-hold")) {
-            return handlePutObjectLegalHold(bucket, key, rawBody);
+            return handlePutObjectLegalHold(bucket, key, readControlBody(body));
         }
         if (request.getParameters().contains("retention")) {
-            return handlePutObjectRetention(bucket, key, rawBody,
+            return handlePutObjectRetention(bucket, key, readControlBody(body),
                     "true".equalsIgnoreCase(bypassGovernanceRetention));
         }
 
@@ -288,7 +289,7 @@ public final class ObjectController {
             if (!copySource.isEmpty()) {
                 return handleUploadPartCopy(bucket, key, uploadId, partNumber, copySource);
             }
-            return handleUploadPart(bucket, key, uploadId, partNumber, rawBody,
+            return handleUploadPart(bucket, key, uploadId, partNumber, body,
                     contentEncoding, payloadHash);
         }
 
@@ -298,7 +299,7 @@ public final class ObjectController {
         }
 
         // PutObject — decode aws-chunked framing if present (AWS CLI v2 default)
-        byte[] payload = rawBody != null ? rawBody : new byte[0];
+        byte[] payload = readControlBody(body);
         if (AwsChunkedDecoder.isChunked(
                 contentEncoding.isEmpty() ? null : contentEncoding,
                 payloadHash.isEmpty() ? null : payloadHash)) {
@@ -349,17 +350,17 @@ public final class ObjectController {
             final String key,
             final String uploadId,
             final int partNumber,
-            final byte[] data,
+            final InputStream data,
             final String contentEncoding,
             final String payloadHash) {
         try {
-            byte[] payload = data != null ? data : new byte[0];
             if (AwsChunkedDecoder.isChunked(
                     contentEncoding.isEmpty() ? null : contentEncoding,
                     payloadHash.isEmpty() ? null : payloadHash)) {
-                payload = AwsChunkedDecoder.decode(payload);
+                return BucketController.s3Error(S3Xml.error("NotImplemented",
+                        "Streaming aws-chunked multipart uploads are not yet supported.", null), 501);
             }
-            final String etag = multipartService.uploadPart(bucket, key, uploadId, partNumber, payload);
+            final String etag = multipartService.uploadPart(bucket, key, uploadId, partNumber, data);
             return HttpResponse.<String>ok()
                     .header("ETag", "\"" + etag + "\"");
         } catch (final S3Exception ex) {
@@ -370,6 +371,19 @@ public final class ObjectController {
         } catch (final IOException ex) {
             LOG.error("UploadPart '{}/{}' part {} failed", bucket, key, partNumber, ex);
             return BucketController.internalError();
+        }
+    }
+
+    private static byte[] readControlBody(final InputStream body) {
+        try {
+            final byte[] bytes = body.readNBytes(MAX_CONTROL_BODY_BYTES + 1);
+            if (bytes.length > MAX_CONTROL_BODY_BYTES) {
+                throw new IllegalArgumentException("Control request body exceeds "
+                        + MAX_CONTROL_BODY_BYTES + " bytes");
+            }
+            return bytes;
+        } catch (final IOException ex) {
+            throw new IllegalArgumentException("Unable to read request body", ex);
         }
     }
 

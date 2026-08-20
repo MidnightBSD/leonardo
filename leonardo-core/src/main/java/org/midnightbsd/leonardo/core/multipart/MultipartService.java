@@ -24,6 +24,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -124,6 +125,19 @@ public final class MultipartService {
                 partNumber, etag, payload.length, Instant.now()));
 
         return etag;
+    }
+
+    /** Streams a multipart part to storage so its size does not consume heap. */
+    public String uploadPart(
+            final String bucket, final String key, final String uploadId,
+            final int partNumber, final InputStream data) throws IOException {
+        validatePartNumber(partNumber);
+        final MultipartUpload upload = requireUpload(bucket, uploadId);
+        validateUploadKey(upload, key);
+        final ObjectPayloadStore.WriteResult stored = partStore.write(uploadId, partNumber, data);
+        updateUploadWithPart(bucket, uploadId, new MultipartUpload.PartInfo(
+                partNumber, stored.etag(), stored.size(), Instant.now()));
+        return stored.etag();
     }
 
     // -------------------------------------------------------------------------

@@ -40,6 +40,9 @@ import java.util.List;
 @Singleton
 public final class ObjectPayloadStore {
 
+    /** Result of a streamed write. */
+    public record WriteResult(String etag, long size) {}
+
     private final StorageLayout layout;
     private final AtomicFileWriter writer;
 
