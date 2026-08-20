@@ -27,6 +27,7 @@ import software.amazon.awssdk.services.s3.model.S3Object;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.io.ByteArrayInputStream;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -60,6 +61,21 @@ final class ObjectCrudConformanceTest extends ConformanceBase {
         assertThat(got.asByteArray()).isEqualTo(BODY);
         assertThat(got.response().contentType()).isEqualTo(CTYPE);
         assertThat(got.response().contentLength()).isEqualTo(BODY.length);
+    }
+
+    @Test
+    void streamsObjectLargerThanLegacyInMemoryLimit() {
+        final byte[] data = new byte[12 * 1024 * 1024 + 17];
+        for (int i = 0; i < data.length; i++) data[i] = (byte) (i & 0xff);
+
+        s3.putObject(r -> r.bucket(bucket).key("large-stream.bin"),
+                RequestBody.fromInputStream(new ByteArrayInputStream(data), data.length));
+
+        final ResponseBytes<GetObjectResponse> range = s3.getObjectAsBytes(r -> r
+                .bucket(bucket).key("large-stream.bin").range("bytes=10485760-10485823"));
+        assertThat(range.response().contentLength()).isEqualTo(64L);
+        assertThat(range.asByteArray()).containsExactly(
+                java.util.Arrays.copyOfRange(data, 10 * 1024 * 1024, 10 * 1024 * 1024 + 64));
     }
 
     @Test
