@@ -224,9 +224,10 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
             final Map<String, List<String>> headers, final String signedHeaders) {
         final StringBuilder sb = new StringBuilder();
         for (final String name : signedHeaders.split(";")) {
-            final List<String> vals = headers.getOrDefault(name, List.of());
+            final String lowerName = name.trim().toLowerCase(Locale.ROOT);
+            final List<String> vals = headers.getOrDefault(lowerName, List.of());
             final String joined = String.join(",", vals).trim().replaceAll("\\s+", " ");
-            sb.append(name).append(':').append(joined).append('\n');
+            sb.append(lowerName).append(':').append(joined).append('\n');
         }
         return sb.toString();
     }

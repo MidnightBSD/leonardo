@@ -76,6 +76,23 @@ class RequestAuthenticatorImplTest {
     }
 
     @Test
+    void sigV4UppercaseSignedHeadersAuthenticates() throws Exception {
+        final URI uri = URI.create("http://s3.local:9000/mybucket");
+        final String payloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+        final Map<String, List<String>> headers = new HashMap<>();
+        headers.put("host",                 List.of("s3.local:9000"));
+        headers.put("x-amz-date",           List.of(TIMESTAMP));
+        headers.put("x-amz-content-sha256", List.of(payloadHash));
+
+        final String signedHeaders = "Host;X-Amz-Content-Sha256;X-Amz-Date";
+        final String authHeader = buildSigV4Auth("GET", uri, headers, signedHeaders, payloadHash);
+        headers.put("authorization", List.of(authHeader));
+
+        assertThat(authenticator.authenticate("GET", uri, headers)).contains(IDENTITY);
+    }
+
+    @Test
     void sigV4RejectsTamperedRequest() throws Exception {
         final URI uri = URI.create("http://s3.local:9000/mybucket");
         final String payloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -189,8 +206,9 @@ class RequestAuthenticatorImplTest {
         final String canonicalQuery = canonicalizeQueryString(uri.getRawQuery());
         final StringBuilder hdrs = new StringBuilder();
         for (final String h : signedHeaders.split(";")) {
-            final List<String> vals = headers.getOrDefault(h, List.of());
-            hdrs.append(h).append(':').append(String.join(",", vals).trim()).append('\n');
+            final String lowerH = h.trim().toLowerCase(Locale.ROOT);
+            final List<String> vals = headers.getOrDefault(lowerH, List.of());
+            hdrs.append(lowerH).append(':').append(String.join(",", vals).trim()).append('\n');
         }
         return method.toUpperCase() + "\n"
                 + canonicalUri + "\n"

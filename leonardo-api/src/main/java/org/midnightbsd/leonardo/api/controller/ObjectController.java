@@ -823,10 +823,20 @@ public final class ObjectController {
     private static boolean etagMatches(final String responseEtag, final String headerValue) {
         if ("*".equals(headerValue.trim())) return responseEtag != null;
         if (responseEtag == null) return false;
+        final String normResponse = unquote(responseEtag);
         for (final String candidate : headerValue.split(",")) {
-            if (responseEtag.equalsIgnoreCase(candidate.trim())) return true;
+            if (normResponse.equalsIgnoreCase(unquote(candidate))) return true;
         }
         return false;
+    }
+
+    private static String unquote(final String s) {
+        if (s == null) return "";
+        final String trimmed = s.trim();
+        if (trimmed.startsWith("\"") && trimmed.endsWith("\"") && trimmed.length() >= 2) {
+            return trimmed.substring(1, trimmed.length() - 1);
+        }
+        return trimmed;
     }
 
     private static Instant parseHttpDate(final String value) {
