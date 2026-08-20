@@ -100,6 +100,27 @@ final class ObjectCrudConformanceTest extends ConformanceBase {
     }
 
     @Test
+    void headObjectHonorsIfNoneMatch() {
+        s3.putObject(r -> r.bucket(bucket).key(KEY), RequestBody.fromBytes(BODY));
+        final String etag = s3.headObject(r -> r.bucket(bucket).key(KEY)).eTag();
+
+        assertThatThrownBy(() -> s3.headObject(r -> r.bucket(bucket).key(KEY)
+                .ifNoneMatch(etag)))
+                .hasMessageContaining("304");
+    }
+
+    @Test
+    void preservesNonTransportContentEncoding() {
+        s3.putObject(r -> r.bucket(bucket).key(KEY).contentEncoding("gzip"),
+                RequestBody.fromBytes(BODY));
+
+        assertThat(s3.headObject(r -> r.bucket(bucket).key(KEY)).contentEncoding())
+                .isEqualTo("gzip");
+        assertThat(s3.getObjectAsBytes(r -> r.bucket(bucket).key(KEY)).response().contentEncoding())
+                .isEqualTo("gzip");
+    }
+
+    @Test
     void userDefinedMetadataRoundTrips() {
         final Map<String, String> meta = Map.of(
                 "x-amz-meta-author", "conformance-test",

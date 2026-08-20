@@ -29,8 +29,9 @@ import java.net.URI;
  * {@code s3.local/bucket/some/key} so that the path-style controllers
  * handle it transparently.
  *
- * <p>Runs at order {@code -200} — before the auth filter ({@code -100})
- * so that the authenticator always sees a path-style URI.
+ * <p>Runs at order {@code -200}, after authentication. This preserves the
+ * client-visible URI for SigV4 verification while still presenting a
+ * path-style URI to the controllers.
  */
 @Filter("/**")
 public final class VirtualHostRoutingFilter implements HttpServerFilter {

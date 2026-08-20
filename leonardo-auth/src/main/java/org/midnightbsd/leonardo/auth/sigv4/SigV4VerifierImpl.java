@@ -53,6 +53,11 @@ public final class SigV4VerifierImpl implements SigV4Verifier {
 
     @Override
     public Optional<String> verify(final SigV4Request request) {
+        return verifyDetailed(request).map(VerificationResult::identity);
+    }
+
+    @Override
+    public Optional<VerificationResult> verifyDetailed(final SigV4Request request) {
         final Optional<ApiKeyStore.ApiKey> maybeKey = keyStore.findByAccessKey(request.accessKey());
         if (maybeKey.isEmpty()) {
             LOG.debug("SigV4: unknown or disabled access key {}", request.accessKey());
@@ -70,7 +75,7 @@ public final class SigV4VerifierImpl implements SigV4Verifier {
                 LOG.debug("SigV4: signature mismatch for access key {}", request.accessKey());
                 return Optional.empty();
             }
-            return Optional.of(apiKey.identity());
+            return Optional.of(new VerificationResult(apiKey.identity(), signingKey));
         } catch (final NoSuchAlgorithmException | InvalidKeyException ex) {
             LOG.error("SigV4: HMAC computation failed", ex);
             return Optional.empty();

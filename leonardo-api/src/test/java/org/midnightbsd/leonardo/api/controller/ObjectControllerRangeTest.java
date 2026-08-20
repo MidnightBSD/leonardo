@@ -12,8 +12,15 @@
 package org.midnightbsd.leonardo.api.controller;
 
 import org.junit.jupiter.api.Test;
+import org.midnightbsd.leonardo.core.object.ObjectMetadata;
+import org.midnightbsd.leonardo.core.object.ObjectService;
+import org.midnightbsd.leonardo.core.multipart.MultipartService;
+
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 final class ObjectControllerRangeTest {
 
@@ -57,5 +64,35 @@ final class ObjectControllerRangeTest {
     void returnsNullForNull() {
         assertThat(ObjectController.parseRange(null, 100)).isNull();
         assertThat(ObjectController.parseRange("", 100)).isNull();
+    }
+
+    @Test
+    void retainsObjectEncodingsButRemovesAwsChunkedTransportEncoding() {
+        assertThat(ObjectController.storageContentEncoding("aws-chunked, gzip")).isEqualTo("gzip");
+        assertThat(ObjectController.storageContentEncoding("aws-chunked")).isNull();
+        assertThat(ObjectController.storageContentEncoding("br")).isEqualTo("br");
+    }
+
+    @Test
+    void successfulIfMatchTakesPrecedenceOverIfUnmodifiedSince() {
+        final ObjectMetadata meta = new ObjectMetadata("key", "id", 3, "text/plain", "\"etag\"",
+                Instant.EPOCH, Instant.parse("2026-08-20T00:00:00Z"), "STANDARD",
+                null, null, null, "private", false, null, null, null, null);
+
+        assertThat(ObjectController.checkConditionals(meta, "\"etag\"", "", "",
+                "Wed, 01 Jan 2020 00:00:00 GMT")).isNull();
+    }
+
+    @Test
+    void headObjectAppliesConditionalHeaders() {
+        final ObjectMetadata meta = new ObjectMetadata("key", "id", 3, "text/plain", "\"etag\"",
+                Instant.EPOCH, Instant.parse("2026-08-20T00:00:00Z"), "STANDARD",
+                null, null, null, "private", false, null, null, null, null);
+        final ObjectService service = mock(ObjectService.class);
+        when(service.headObject("bucket", "key")).thenReturn(meta);
+        final ObjectController controller = new ObjectController(service, mock(MultipartService.class));
+
+        assertThat(controller.headObject("bucket", "key", "", "\"etag\"", "", "", "")
+                .getStatus().getCode()).isEqualTo(304);
     }
 }

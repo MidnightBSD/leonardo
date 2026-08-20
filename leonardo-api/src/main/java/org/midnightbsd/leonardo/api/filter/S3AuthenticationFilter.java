@@ -41,7 +41,9 @@ import java.util.Optional;
  * <p>Admin paths ({@code /admin/**}) are skipped — they are handled by
  * {@code AdminPortFilter} and the admin port does not require S3 auth.
  *
- * <p>Runs at order {@code -100}, after {@code AdminPortFilter} ({@code -1000}).
+ * <p>Runs at order {@code -300}, before virtual-host routing. SigV4 covers the
+ * original request URI, so authentication must happen before routing rewrites
+ * a virtual-host-style path into the internal path-style form.
  */
 @Filter("/**")
 public final class S3AuthenticationFilter implements HttpServerFilter {
@@ -72,10 +74,10 @@ public final class S3AuthenticationFilter implements HttpServerFilter {
         }
 
         final Map<String, List<String>> headers = lowercasedHeaders(request);
-        final Optional<String> identity = authenticator.authenticate(
+        final Optional<RequestAuthenticator.AuthenticationResult> authenticated = authenticator.authenticateDetailed(
                 request.getMethodName(), request.getUri(), headers);
 
-        if (identity.isEmpty()) {
+        if (authenticated.isEmpty()) {
             LOG.debug("Auth rejected: {} {}", request.getMethodName(), path);
             return Publishers.just(
                     HttpResponse.status(HttpStatus.FORBIDDEN)
@@ -83,14 +85,18 @@ public final class S3AuthenticationFilter implements HttpServerFilter {
                             .body(ACCESS_DENIED_XML));
         }
 
-        LOG.debug("Auth passed: identity={} {} {}", identity.get(), request.getMethodName(), path);
-        request.setAttribute("s3.identity", identity.get());
+        final RequestAuthenticator.AuthenticationResult result = authenticated.get();
+        LOG.debug("Auth passed: identity={} {} {}", result.identity(), request.getMethodName(), path);
+        request.setAttribute("s3.identity", result.identity());
+        if (result.streamingContext() != null) {
+            request.setAttribute("s3.sigv4Streaming", result.streamingContext());
+        }
         return chain.proceed(request);
     }
 
     @Override
     public int getOrder() {
-        return -100;
+        return -300;
     }
 
     private static Map<String, List<String>> lowercasedHeaders(final HttpRequest<?> request) {

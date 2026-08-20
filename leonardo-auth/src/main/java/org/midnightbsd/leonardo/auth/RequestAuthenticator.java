@@ -25,6 +25,9 @@ import java.util.Optional;
  */
 public interface RequestAuthenticator {
 
+    /** Authentication result, including SigV4 streaming context when applicable. */
+    record AuthenticationResult(String identity, SigV4StreamingContext streamingContext) {}
+
     /**
      * Authenticates the request.
      *
@@ -35,4 +38,14 @@ public interface RequestAuthenticator {
      *         (unknown key, bad signature, missing auth when required, etc.)
      */
     Optional<String> authenticate(String method, URI uri, Map<String, List<String>> headers);
+
+    /**
+     * Authenticates a request and returns the context needed by a streaming
+     * SigV4 payload verifier. Implementations that do not support streaming
+     * can retain the identity-only behavior.
+     */
+    default Optional<AuthenticationResult> authenticateDetailed(
+            final String method, final URI uri, final Map<String, List<String>> headers) {
+        return authenticate(method, uri, headers).map(identity -> new AuthenticationResult(identity, null));
+    }
 }

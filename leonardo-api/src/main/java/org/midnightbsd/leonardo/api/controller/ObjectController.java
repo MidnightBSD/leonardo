@@ -92,11 +92,18 @@ public final class ObjectController {
     public HttpResponse<?> headObject(
             @PathVariable final String bucket,
             @PathVariable final String key,
-            @QueryValue(value = "versionId", defaultValue = "") final String versionId) {
+            @QueryValue(value = "versionId", defaultValue = "") final String versionId,
+            @Header(value = "if-none-match", defaultValue = "") final String ifNoneMatch,
+            @Header(value = "if-match", defaultValue = "") final String ifMatch,
+            @Header(value = "if-modified-since", defaultValue = "") final String ifModifiedSince,
+            @Header(value = "if-unmodified-since", defaultValue = "") final String ifUnmodifiedSince) {
         try {
             final ObjectMetadata meta = versionId.isEmpty()
                     ? objectService.headObject(bucket, key)
                     : objectService.headObjectVersion(bucket, key, versionId);
+            final HttpResponse<?> conditional = checkConditionals(
+                    meta, ifMatch, ifNoneMatch, ifModifiedSince, ifUnmodifiedSince);
+            if (conditional != null) return conditional;
             final MutableHttpResponse<?> resp = objectHeaders(HttpResponse.ok(), meta);
             resp.header("Accept-Ranges", "bytes");
             if (meta.versionId() != null) {
@@ -293,7 +300,9 @@ public final class ObjectController {
                 return handleUploadPartCopy(bucket, key, uploadId, partNumber, copySource);
             }
             return handleUploadPart(bucket, key, uploadId, partNumber, body,
-                    contentEncoding, payloadHash);
+                    contentEncoding, payloadHash,
+                    request.getAttribute("s3.sigv4Streaming", org.midnightbsd.leonardo.auth.SigV4StreamingContext.class)
+                            .orElse(null), request.getHeaders().get("x-amz-trailer"));
         }
 
         // CopyObject
@@ -302,21 +311,42 @@ public final class ObjectController {
         }
 
         // PutObject — decode aws-chunked framing if present (AWS CLI v2 default)
-        final InputStream payload = AwsChunkedDecoder.isChunked(
-                contentEncoding.isEmpty() ? null : contentEncoding,
-                payloadHash.isEmpty() ? null : payloadHash)
-                ? AwsChunkedDecoder.decodeStream(body) : body;
+        final Map<String, String> requestChecksums = extractChecksums(request);
+        final org.midnightbsd.leonardo.auth.SigV4StreamingContext streamingContext = request
+                .getAttribute("s3.sigv4Streaming", org.midnightbsd.leonardo.auth.SigV4StreamingContext.class)
+                .orElse(null);
+        if (payloadHash.startsWith("STREAMING-AWS4-HMAC-SHA256-PAYLOAD") && streamingContext == null) {
+            return BucketController.s3Error(S3Xml.error("SignatureDoesNotMatch",
+                    "The streaming payload has no verified SigV4 signing context.", null), 403);
+        }
+        final InputStream payload;
+        try {
+            payload = AwsChunkedDecoder.isChunked(
+                    contentEncoding.isEmpty() ? null : contentEncoding,
+                    payloadHash.isEmpty() ? null : payloadHash)
+                    ? AwsChunkedDecoder.decodeStream(body,
+                            streamingContext,
+                            request.getHeaders().get("x-amz-trailer"), requestChecksums)
+                    : body;
+        } catch (final IllegalArgumentException ex) {
+            return BucketController.s3Error(S3Xml.error("InvalidRequest", ex.getMessage(), null), 400);
+        }
 
         // Verify integrity checksums provided by the client
         try {
-            final Map<String, String> requestChecksums = extractChecksums(request);
-
             final var userMetadata = new HashMap<String, String>();
             request.getHeaders().forEachValue((name, value) -> {
                 if (name.toLowerCase().startsWith("x-amz-meta-")) {
                     userMetadata.put(name.toLowerCase(), value);
                 }
             });
+            final String storedContentEncoding = storageContentEncoding(contentEncoding);
+            if (storedContentEncoding != null) {
+                // aws-chunked is transport framing, not object metadata. Other
+                // encodings (for example gzip) describe the stored object and
+                // must be returned by GET and HEAD just as S3 does.
+                userMetadata.put("Content-Encoding", storedContentEncoding);
+            }
 
             final ObjectService.PutResult result = objectService.putObject(
                     bucket, key,
@@ -346,12 +376,19 @@ public final class ObjectController {
             final int partNumber,
             final InputStream data,
             final String contentEncoding,
-            final String payloadHash) {
+            final String payloadHash,
+            final org.midnightbsd.leonardo.auth.SigV4StreamingContext streamingContext,
+            final String trailerHeaderNames) {
         try {
+            if (payloadHash.startsWith("STREAMING-AWS4-HMAC-SHA256-PAYLOAD") && streamingContext == null) {
+                return BucketController.s3Error(S3Xml.error("SignatureDoesNotMatch",
+                        "The streaming payload has no verified SigV4 signing context.", null), 403);
+            }
             final InputStream payload = AwsChunkedDecoder.isChunked(
                     contentEncoding.isEmpty() ? null : contentEncoding,
                     payloadHash.isEmpty() ? null : payloadHash)
-                    ? AwsChunkedDecoder.decodeStream(data) : data;
+                    ? AwsChunkedDecoder.decodeStream(data,
+                            streamingContext, trailerHeaderNames, new HashMap<>()) : data;
             final String etag = multipartService.uploadPart(bucket, key, uploadId, partNumber, payload);
             return HttpResponse.<String>ok()
                     .header("ETag", "\"" + etag + "\"");
@@ -782,7 +819,7 @@ public final class ObjectController {
      * If-Modified-Since / If-Unmodified-Since). Returns a short-circuit response
      * (304 or 412) or {@code null} if the request should proceed normally.
      */
-    private static HttpResponse<?> checkConditionals(
+    static HttpResponse<?> checkConditionals(
             final ObjectMetadata meta,
             final String ifMatch,
             final String ifNoneMatch,
@@ -799,8 +836,9 @@ public final class ObjectController {
             }
         }
 
-        // If-Unmodified-Since: fail with 412 if modified after the given date
-        if (!ifUnmodifiedSince.isEmpty()) {
+        // S3 gives a successful If-Match precedence over a failing
+        // If-Unmodified-Since condition (unlike applying both RFC tests blindly).
+        if (ifMatch.isEmpty() && !ifUnmodifiedSince.isEmpty()) {
             final Instant since = parseHttpDate(ifUnmodifiedSince);
             if (since != null && lastMod != null && lastMod.isAfter(since)) {
                 return HttpResponse.status(HttpStatus.PRECONDITION_FAILED);
@@ -937,5 +975,16 @@ public final class ObjectController {
             }
         });
         return result;
+    }
+
+    /** Removes the transport-only aws-chunked token while retaining object encodings. */
+    static String storageContentEncoding(final String contentEncoding) {
+        if (contentEncoding == null || contentEncoding.isBlank()) return null;
+        final String result = java.util.Arrays.stream(contentEncoding.split(","))
+                .map(String::trim)
+                .filter(value -> !value.equalsIgnoreCase("aws-chunked"))
+                .filter(value -> !value.isEmpty())
+                .collect(java.util.stream.Collectors.joining(", "));
+        return result.isEmpty() ? null : result;
     }
 }

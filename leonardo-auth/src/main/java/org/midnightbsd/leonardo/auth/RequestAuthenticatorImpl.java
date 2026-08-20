@@ -92,30 +92,39 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
     public Optional<String> authenticate(
             final String method, final URI uri, final Map<String, List<String>> headers) {
 
+        return authenticateDetailed(method, uri, headers).map(AuthenticationResult::identity);
+    }
+
+    @Override
+    public Optional<AuthenticationResult> authenticateDetailed(
+            final String method, final URI uri, final Map<String, List<String>> headers) {
+
         final String auth = firstHeader(headers, "authorization");
 
         if (auth == null || auth.isBlank()) {
             // Check for SigV4 presigned URL (X-Amz-Signature in query string)
             final Map<String, String> queryParams = parseQueryParams(uri.getRawQuery());
             if (queryParams.containsKey("X-Amz-Signature")) {
-                return authenticatePresigned(method, uri, headers, queryParams);
+                return authenticatePresigned(method, uri, headers, queryParams)
+                        .map(identity -> new AuthenticationResult(identity, null));
             }
             if (allowAnonymousRead && "GET".equalsIgnoreCase(method)) {
-                return Optional.of("anonymous");
+                return Optional.of(new AuthenticationResult("anonymous", null));
             }
             LOG.debug("Request missing Authorization header");
             return Optional.empty();
         }
 
         if (auth.startsWith("AWS4-HMAC-SHA256 ")) {
-            return authenticateSigV4(method, uri, headers, auth);
+            return authenticateSigV4Detailed(method, uri, headers, auth);
         }
         if (auth.startsWith("AWS ")) {
             if (!allowSigV2) {
                 LOG.debug("SigV2 request rejected: allow_sigv2 is false");
                 return Optional.empty();
             }
-            return authenticateSigV2(method, uri, headers, auth);
+            return authenticateSigV2(method, uri, headers, auth)
+                    .map(identity -> new AuthenticationResult(identity, null));
         }
 
         LOG.debug("Unrecognised Authorization scheme");
@@ -167,6 +176,39 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
         final SigV4Verifier.SigV4Request req = new SigV4Verifier.SigV4Request(
                 accessKey, date, region, service, signedHeaders, signature, stringToSign);
         return sigV4Verifier.verify(req);
+    }
+
+    /** Authenticates SigV4 and retains only derived, request-scoped streaming material. */
+    private Optional<AuthenticationResult> authenticateSigV4Detailed(
+            final String method, final URI uri,
+            final Map<String, List<String>> headers, final String auth) {
+
+        final Matcher m = SIGV4.matcher(auth);
+        if (!m.find()) return Optional.empty();
+        final String accessKey = m.group(1);
+        final String date = m.group(2);
+        final String region = m.group(3);
+        final String service = m.group(4);
+        final String signedHeaders = m.group(5);
+        final String signature = m.group(6);
+        final String timestamp = firstHeader(headers, "x-amz-date");
+        final String payloadHash = firstHeader(headers, "x-amz-content-sha256");
+        if (timestamp == null || payloadHash == null) return Optional.empty();
+
+        final String credentialScope = date + "/" + region + "/" + service + "/aws4_request";
+        final String canonicalRequest = buildCanonicalRequest(
+                method, uri, headers, signedHeaders, payloadHash);
+        final String stringToSign = "AWS4-HMAC-SHA256\n" + timestamp + "\n"
+                + credentialScope + "\n" + sha256Hex(canonicalRequest);
+        final SigV4Verifier.SigV4Request req = new SigV4Verifier.SigV4Request(
+                accessKey, date, region, service, signedHeaders, signature, stringToSign);
+        return sigV4Verifier.verifyDetailed(req).map(verified -> {
+            final boolean signedStreaming = payloadHash.startsWith("STREAMING-AWS4-HMAC-SHA256-PAYLOAD");
+            final SigV4StreamingContext streaming = signedStreaming && verified.signingKey() != null
+                    ? new SigV4StreamingContext(verified.signingKey(), timestamp, credentialScope, signature)
+                    : null;
+            return new AuthenticationResult(verified.identity(), streaming);
+        });
     }
 
     private String buildCanonicalRequest(

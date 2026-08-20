@@ -112,6 +112,44 @@ class RequestAuthenticatorImplTest {
     }
 
     @Test
+    void sigV4VirtualHostedRequestAuthenticatesAgainstOriginalPath() throws Exception {
+        final URI uri = URI.create("http://mybucket.s3.local:9000/a/key");
+        final String payloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        final Map<String, List<String>> headers = new HashMap<>();
+        headers.put("host", List.of("mybucket.s3.local:9000"));
+        headers.put("x-amz-date", List.of(TIMESTAMP));
+        headers.put("x-amz-content-sha256", List.of(payloadHash));
+        final String signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+        headers.put("authorization", List.of(buildSigV4Auth(
+                "GET", uri, headers, signedHeaders, payloadHash)));
+
+        assertThat(authenticator.authenticate("GET", uri, headers)).contains(IDENTITY);
+        // The internal /mybucket/a/key route must never be used for this signature.
+        assertThat(authenticator.authenticate("GET",
+                URI.create("http://mybucket.s3.local:9000/mybucket/a/key"), headers)).isEmpty();
+    }
+
+    @Test
+    void signedStreamingRequestIncludesDerivedPayloadVerificationContext() throws Exception {
+        final URI uri = URI.create("http://s3.local:9000/mybucket/key");
+        final String payloadHash = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD";
+        final Map<String, List<String>> headers = new HashMap<>();
+        headers.put("host", List.of("s3.local:9000"));
+        headers.put("x-amz-date", List.of(TIMESTAMP));
+        headers.put("x-amz-content-sha256", List.of(payloadHash));
+        final String signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+        headers.put("authorization", List.of(buildSigV4Auth(
+                "PUT", uri, headers, signedHeaders, payloadHash)));
+
+        assertThat(authenticator.authenticateDetailed("PUT", uri, headers))
+                .hasValueSatisfying(result -> {
+                    assertThat(result.identity()).isEqualTo(IDENTITY);
+                    assertThat(result.streamingContext()).isNotNull();
+                    assertThat(result.streamingContext().seedSignature()).hasSize(64);
+                });
+    }
+
+    @Test
     void sigV4RejectsMissingAuthHeader() {
         assertThat(authenticator.authenticate("GET",
                 URI.create("http://s3.local/bucket"), Map.of())).isEmpty();
