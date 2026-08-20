@@ -13,6 +13,7 @@ package org.midnightbsd.leonardo.core.object;
 
 import jakarta.inject.Singleton;
 import org.midnightbsd.leonardo.core.S3Exception;
+import org.midnightbsd.leonardo.core.IntegrityChecker;
 import org.midnightbsd.leonardo.core.Ulid;
 import org.midnightbsd.leonardo.core.bucket.BucketMetadata;
 import org.midnightbsd.leonardo.core.bucket.BucketMetadataStore;
@@ -21,6 +22,7 @@ import org.midnightbsd.leonardo.storage.layout.StorageLayout;
 import org.midnightbsd.leonardo.storage.lock.StripedLockManager;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -86,17 +88,59 @@ public final class ObjectService {
             final Map<String, String> checksums,
             final byte[] body) throws IOException {
 
+        return putObject(bucket, key, callerObjectId, contentType, userMetadata, checksums,
+                new java.io.ByteArrayInputStream(body != null ? body : new byte[0]));
+    }
+
+    /** Stores an object by streaming its payload directly to durable storage. */
+    public PutResult putObject(
+            final String bucket,
+            final String key,
+            final String callerObjectId,
+            final String contentType,
+            final Map<String, String> userMetadata,
+            final Map<String, String> checksums,
+            final InputStream body) throws IOException {
+
+        return putObject(bucket, key, callerObjectId, contentType, userMetadata, checksums, null, body);
+    }
+
+    /** Stores a streamed object and verifies supplied integrity values before publishing metadata. */
+    public PutResult putObject(
+            final String bucket, final String key, final String callerObjectId,
+            final String contentType, final Map<String, String> userMetadata,
+            final Map<String, String> checksums, final String contentMd5, final InputStream body)
+            throws IOException {
+
         ensureBucketExists(bucket);
         final BucketMetadata bucketMeta = bucketStore.read(bucket)
                 .orElseThrow(() -> S3Exception.noSuchBucket(bucket));
 
         final String objectId = resolveObjectId(bucket, callerObjectId);
-        final byte[] payload = body != null ? body : new byte[0];
 
         // Write payload first; if metadata write fails, the orphaned data file
         // will be cleaned up by a future scrubber. This ordering ensures we
         // never have metadata pointing at a missing data file.
-        final String etag = payloadStore.write(bucket, objectId, payload);
+        final ObjectPayloadStore.WriteResult stored = payloadStore.write(bucket, objectId, body);
+        final String etag = stored.etag();
+        try (InputStream storedData = payloadStore.open(bucket, objectId)) {
+            IntegrityChecker.verifyContentMd5(storedData, contentMd5);
+        } catch (final RuntimeException | IOException ex) {
+            payloadStore.delete(bucket, objectId);
+            throw ex;
+        }
+        if (checksums != null) {
+            try {
+                for (final var checksum : checksums.entrySet()) {
+                    try (InputStream storedData = payloadStore.open(bucket, objectId)) {
+                        IntegrityChecker.verify(storedData, checksum.getKey(), checksum.getValue());
+                    }
+                }
+            } catch (final RuntimeException | IOException ex) {
+                payloadStore.delete(bucket, objectId);
+                throw ex;
+            }
+        }
         final Instant now = Instant.now();
 
         final boolean versioningEnabled = bucketMeta.versioning() != null
@@ -135,7 +179,7 @@ public final class ObjectService {
             }
 
             final var meta = new ObjectMetadata(
-                    key, objectId, payload.length,
+                    key, objectId, stored.size(),
                     contentType != null && !contentType.isEmpty()
                             ? contentType : "application/octet-stream",
                     "\"" + etag + "\"",
@@ -155,6 +199,26 @@ public final class ObjectService {
     // -------------------------------------------------------------------------
 
     public record GetResult(ObjectMetadata meta, byte[] data) {}
+    public record GetStreamResult(ObjectMetadata meta, InputStream data) {}
+
+    /** Opens the current object payload as a stream. The caller owns the stream. */
+    public GetStreamResult openObject(final String bucket, final String key) throws IOException {
+        ensureBucketExists(bucket);
+        final ObjectMetadata meta = metaStore.read(bucket, key)
+                .orElseThrow(() -> S3Exception.noSuchKey(key));
+        if (isDeleteMarker(meta)) throw S3Exception.noSuchKey(key);
+        return new GetStreamResult(meta, payloadStore.open(bucket, meta.objectId()));
+    }
+
+    /** Opens a versioned object payload as a stream. The caller owns the stream. */
+    public GetStreamResult openObjectVersion(
+            final String bucket, final String key, final String versionId) throws IOException {
+        ensureBucketExists(bucket);
+        final ObjectMetadata meta = metaStore.readVersion(bucket, key, versionId)
+                .orElseThrow(() -> S3Exception.noSuchKey(key));
+        if (meta.legalHold() && meta.versionId() == null) throw S3Exception.noSuchKey(key);
+        return new GetStreamResult(meta, payloadStore.open(bucket, meta.objectId()));
+    }
 
     /** Returns the object metadata + payload bytes for the current version. */
     public GetResult getObject(final String bucket, final String key) throws IOException {

@@ -153,45 +153,48 @@ public final class ObjectController {
                     "GetObjectTorrent is not supported by this server.", null), 501);
         }
         try {
-            final ObjectService.GetResult result = versionId.isEmpty()
-                    ? objectService.getObject(bucket, key)
-                    : objectService.getObjectVersion(bucket, key, versionId);
+            final ObjectService.GetStreamResult result = versionId.isEmpty()
+                    ? objectService.openObject(bucket, key)
+                    : objectService.openObjectVersion(bucket, key, versionId);
             final ObjectMetadata meta = result.meta();
 
             // Conditional request checks (RFC 7232 precedence order)
             final HttpResponse<?> conditional = checkConditionals(
                     meta, ifMatch, ifNoneMatch, ifModifiedSince, ifUnmodifiedSince);
-            if (conditional != null) return conditional;
+            if (conditional != null) {
+                result.data().close();
+                return conditional;
+            }
 
-            final byte[] data = result.data();
-            final MutableHttpResponse<byte[]> response;
+            final MutableHttpResponse<InputStream> response;
 
             // Range request support
             if (!rangeHeader.isEmpty()) {
-                final long[] range = parseRange(rangeHeader, data.length);
+                final long[] range = parseRange(rangeHeader, meta.size());
                 if (range != null) {
-                    final int start = (int) range[0];
-                    final int end   = (int) range[1];
-                    final byte[] slice = java.util.Arrays.copyOfRange(data, start, end + 1);
+                    final long start = range[0];
+                    final long end   = range[1];
+                    result.data().skipNBytes(start);
+                    final InputStream slice = new LimitedInputStream(result.data(), end - start + 1);
                     response = HttpResponse.status(HttpStatus.PARTIAL_CONTENT, "Partial Content")
                             .body(slice);
                     objectHeaders(response, meta);
                     response.contentType(meta.contentType());
                     response.header("Content-Range",
-                            "bytes " + start + "-" + end + "/" + data.length);
-                    response.header("Content-Length", String.valueOf(slice.length));
+                            "bytes " + start + "-" + end + "/" + meta.size());
+                    response.header("Content-Length", String.valueOf(end - start + 1));
                     response.header("Accept-Ranges", "bytes");
                     return response;
                 }
                 // Invalid range → 416
                 return HttpResponse.<String>status(HttpStatus.valueOf(416))
-                        .header("Content-Range", "bytes */" + data.length);
+                        .header("Content-Range", "bytes */" + meta.size());
             }
 
-            response = HttpResponse.ok(data);
+            response = HttpResponse.ok(result.data());
             objectHeaders(response, meta);
             response.contentType(meta.contentType());
-            response.header("Content-Length", String.valueOf(data.length));
+            response.header("Content-Length", String.valueOf(meta.size()));
             response.header("Accept-Ranges", "bytes");
             if (meta.versionId() != null) {
                 response.header("x-amz-version-id", meta.versionId());
@@ -299,23 +302,14 @@ public final class ObjectController {
         }
 
         // PutObject — decode aws-chunked framing if present (AWS CLI v2 default)
-        byte[] payload = readControlBody(body);
-        if (AwsChunkedDecoder.isChunked(
+        final InputStream payload = AwsChunkedDecoder.isChunked(
                 contentEncoding.isEmpty() ? null : contentEncoding,
-                payloadHash.isEmpty() ? null : payloadHash)) {
-            try {
-                payload = AwsChunkedDecoder.decode(payload);
-            } catch (final IllegalArgumentException ex) {
-                return BucketController.s3Error(
-                        S3Xml.error("MalformedPOSTRequest", ex.getMessage(), null), 400);
-            }
-        }
+                payloadHash.isEmpty() ? null : payloadHash)
+                ? AwsChunkedDecoder.decodeStream(body) : body;
 
         // Verify integrity checksums provided by the client
         try {
-            IntegrityChecker.verifyContentMd5(payload, contentMd5.isEmpty() ? null : contentMd5);
             final Map<String, String> requestChecksums = extractChecksums(request);
-            IntegrityChecker.verifyAll(payload, requestChecksums);
 
             final var userMetadata = new HashMap<String, String>();
             request.getHeaders().forEachValue((name, value) -> {
@@ -330,7 +324,7 @@ public final class ObjectController {
                     contentType.isEmpty() ? null : contentType,
                     userMetadata.isEmpty() ? null : userMetadata,
                     requestChecksums.isEmpty() ? null : requestChecksums,
-                    payload);
+                    contentMd5.isEmpty() ? null : contentMd5, payload);
             final MutableHttpResponse<String> putResp = HttpResponse.<String>ok()
                     .header("ETag", "\"" + result.etag() + "\"");
             if (result.versionId() != null) {
@@ -857,6 +851,32 @@ public final class ObjectController {
             return Instant.from(RFC1123.parse(value));
         } catch (final DateTimeParseException ex) {
             return null;
+        }
+    }
+
+    /** Limits a response stream to the requested inclusive byte range. */
+    private static final class LimitedInputStream extends java.io.FilterInputStream {
+        private long remaining;
+
+        private LimitedInputStream(final InputStream delegate, final long remaining) {
+            super(delegate);
+            this.remaining = remaining;
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (remaining == 0) return -1;
+            final int value = in.read();
+            if (value != -1) remaining--;
+            return value;
+        }
+
+        @Override
+        public int read(final byte[] buffer, final int offset, final int length) throws IOException {
+            if (remaining == 0) return -1;
+            final int read = in.read(buffer, offset, (int) Math.min(length, remaining));
+            if (read > 0) remaining -= read;
+            return read;
         }
     }
 

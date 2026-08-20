@@ -50,7 +50,16 @@ final class AwsChunkedDecoderTest {
     @Test
     void decodesEmptyPayload() {
         assertThat(AwsChunkedDecoder.decode(new byte[0])).isEmpty();
-        assertThat(AwsChunkedDecoder.decode(null)).isEmpty();
+        assertThat(AwsChunkedDecoder.decode((byte[]) null)).isEmpty();
+    }
+
+    @Test
+    void decodesStreamingBody() throws Exception {
+        final byte[] encoded = "3;chunk-signature=x\r\nabc\r\n0;chunk-signature=x\r\n"
+                .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        try (var decoded = AwsChunkedDecoder.decodeStream(new java.io.ByteArrayInputStream(encoded))) {
+            assertThat(decoded.readAllBytes()).containsExactly('a', 'b', 'c');
+        }
     }
 
     @Test

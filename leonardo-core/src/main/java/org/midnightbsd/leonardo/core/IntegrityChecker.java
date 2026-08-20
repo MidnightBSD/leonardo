@@ -134,6 +134,30 @@ public final class IntegrityChecker {
         };
     }
 
+    public static void verify(final InputStream data, final String algorithm, final String expected)
+            throws IOException {
+        if (!compute(data, algorithm).equals(expected)) {
+            throw new S3Exception("BadDigest", "The " + algorithm.toUpperCase()
+                    + " checksum you specified did not match the data received.", 400);
+        }
+    }
+
+    public static void verifyContentMd5(final InputStream data, final String base64Md5)
+            throws IOException {
+        if (base64Md5 == null || base64Md5.isEmpty()) return;
+        try {
+            final byte[] expected = Base64.getDecoder().decode(base64Md5);
+            final byte[] actual = digest(data, "MD5", new byte[8192]);
+            if (!MessageDigest.isEqual(expected, actual)) {
+                throw new S3Exception("BadDigest",
+                        "The Content-MD5 you specified did not match what we received.", 400);
+            }
+        } catch (final IllegalArgumentException ex) {
+            throw new S3Exception(S3Exception.INVALID_ARGUMENT,
+                    "Invalid Content-MD5 value: " + base64Md5, 400);
+        }
+    }
+
 
     private static byte[] toBeInt(final int value) {
         return new byte[]{
