@@ -12,6 +12,8 @@
 package org.midnightbsd.leonardo.api.controller;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -106,6 +108,66 @@ final class AwsChunkedDecoder {
             }
         }
         return out.toByteArray();
+    }
+
+    /** Returns a stream that strips aws-chunked framing as bytes are consumed. */
+    static InputStream decodeStream(final InputStream chunked) {
+        return new InputStream() {
+            private int remaining;
+            private boolean finished;
+
+            @Override
+            public int read() throws IOException {
+                final byte[] one = new byte[1];
+                return read(one, 0, 1) == -1 ? -1 : Byte.toUnsignedInt(one[0]);
+            }
+
+            @Override
+            public int read(final byte[] buffer, final int offset, final int length) throws IOException {
+                if (length == 0) return 0;
+                while (remaining == 0 && !finished) nextChunk();
+                if (finished) return -1;
+                final int count = chunked.read(buffer, offset, Math.min(length, remaining));
+                if (count == -1) throw new IOException("aws-chunked: truncated chunk data");
+                remaining -= count;
+                if (remaining == 0) requireCrLf();
+                return count;
+            }
+
+            private void nextChunk() throws IOException {
+                final String line = readLine();
+                final int semi = line.indexOf(';');
+                try {
+                    remaining = Integer.parseUnsignedInt(
+                            (semi < 0 ? line : line.substring(0, semi)).trim(), 16);
+                } catch (final NumberFormatException ex) {
+                    throw new IOException("aws-chunked: invalid chunk size", ex);
+                }
+                if (remaining == 0) finished = true;
+            }
+
+            private String readLine() throws IOException {
+                final ByteArrayOutputStream line = new ByteArrayOutputStream();
+                int previous = -1;
+                while (line.size() < 16 * 1024) {
+                    final int current = chunked.read();
+                    if (current == -1) throw new IOException("aws-chunked: truncated chunk header");
+                    if (previous == '\r' && current == '\n') {
+                        final byte[] bytes = line.toByteArray();
+                        return new String(bytes, 0, bytes.length - 1, StandardCharsets.US_ASCII);
+                    }
+                    line.write(current);
+                    previous = current;
+                }
+                throw new IOException("aws-chunked: chunk header is too large");
+            }
+
+            private void requireCrLf() throws IOException {
+                if (chunked.read() != '\r' || chunked.read() != '\n') {
+                    throw new IOException("aws-chunked: missing chunk terminator");
+                }
+            }
+        };
     }
 
     /** Returns the index of the first {@code \r\n} at or after {@code from}, or {@code -1}. */

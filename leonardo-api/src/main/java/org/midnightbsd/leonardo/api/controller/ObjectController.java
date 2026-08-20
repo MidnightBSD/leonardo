@@ -354,13 +354,11 @@ public final class ObjectController {
             final String contentEncoding,
             final String payloadHash) {
         try {
-            if (AwsChunkedDecoder.isChunked(
+            final InputStream payload = AwsChunkedDecoder.isChunked(
                     contentEncoding.isEmpty() ? null : contentEncoding,
-                    payloadHash.isEmpty() ? null : payloadHash)) {
-                return BucketController.s3Error(S3Xml.error("NotImplemented",
-                        "Streaming aws-chunked multipart uploads are not yet supported.", null), 501);
-            }
-            final String etag = multipartService.uploadPart(bucket, key, uploadId, partNumber, data);
+                    payloadHash.isEmpty() ? null : payloadHash)
+                    ? AwsChunkedDecoder.decodeStream(data) : data;
+            final String etag = multipartService.uploadPart(bucket, key, uploadId, partNumber, payload);
             return HttpResponse.<String>ok()
                     .header("ETag", "\"" + etag + "\"");
         } catch (final S3Exception ex) {
