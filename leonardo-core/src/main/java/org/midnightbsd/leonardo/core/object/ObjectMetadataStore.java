@@ -189,10 +189,13 @@ public final class ObjectMetadataStore {
 
             if (objects.size() >= limit) {
                 truncated = true;
-                nextKey = key;
                 break;
             }
             objects.add(meta);
+        }
+
+        if (truncated && !objects.isEmpty()) {
+            nextKey = objects.get(objects.size() - 1).key();
         }
 
         return new ListPage(objects, new ArrayList<>(commonPrefixes), truncated, nextKey);
@@ -283,7 +286,6 @@ public final class ObjectMetadataStore {
             // Current (latest) version (or delete marker)
             if (versions.size() >= limit) {
                 truncated = true;
-                nextKeyMarkerResult = key;
                 break;
             }
             final boolean isMarker = meta.objectId() == null || meta.objectId().isEmpty();
@@ -300,14 +302,18 @@ public final class ObjectMetadataStore {
                 for (final ObjectMetadata.ObjectVersion v : hist) {
                     if (versions.size() >= limit) {
                         truncated = true;
-                        nextKeyMarkerResult = key;
-                        nextVersionIdResult = v.versionId();
                         break outer;
                     }
                     versions.add(new VersionEntry(key, v.versionId(), v.etag(), v.size(),
                             v.deleteMarker(), false, v.createdAt(), "STANDARD"));
                 }
             }
+        }
+
+        if (truncated && !versions.isEmpty()) {
+            final VersionEntry last = versions.get(versions.size() - 1);
+            nextKeyMarkerResult = last.key();
+            nextVersionIdResult = last.versionId();
         }
 
         return new ListVersionsPage(versions, new ArrayList<>(commonPrefixes),

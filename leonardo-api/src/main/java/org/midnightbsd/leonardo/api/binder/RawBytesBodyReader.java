@@ -62,8 +62,14 @@ public final class RawBytesBodyReader implements MessageBodyReader<Optional<byte
             final Headers httpHeaders,
             final InputStream inputStream) throws CodecException {
         try {
+            final Long len = httpHeaders.get("Content-Length", Long.class).orElse(-1L);
+            if (len > Integer.MAX_VALUE - 8) {
+                throw new CodecException("Request payload exceeds maximum allowed in-memory size: " + len);
+            }
             final byte[] bytes = inputStream.readAllBytes();
             return bytes.length == 0 ? Optional.empty() : Optional.of(bytes);
+        } catch (final OutOfMemoryError err) {
+            throw new CodecException("Payload too large to buffer in memory", new IOException(err));
         } catch (final IOException ex) {
             throw new CodecException("Error reading body: " + ex.getMessage(), ex);
         }

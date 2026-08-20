@@ -857,7 +857,7 @@ public final class ObjectController {
      *         is not satisfiable or the syntax is unrecognised
      */
     static long[] parseRange(final String rangeHeader, final long totalLength) {
-        if (rangeHeader == null || !rangeHeader.startsWith("bytes=")) return null;
+        if (rangeHeader == null || !rangeHeader.startsWith("bytes=") || totalLength <= 0) return null;
         final String spec = rangeHeader.substring("bytes=".length()).trim();
         final int dash = spec.indexOf('-');
         if (dash < 0) return null;
