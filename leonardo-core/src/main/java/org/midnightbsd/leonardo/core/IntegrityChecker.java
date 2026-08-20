@@ -13,6 +13,8 @@ package org.midnightbsd.leonardo.core;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Base64;
 import java.util.Map;
 import java.util.zip.CRC32C;
@@ -109,6 +111,30 @@ public final class IntegrityChecker {
         }
     }
 
+    /** Computes a checksum from a stream without retaining the object in memory. */
+    public static String compute(final InputStream data, final String algorithm) throws IOException {
+        final byte[] buffer = new byte[8192];
+        return switch (algorithm.toLowerCase()) {
+            case CRC32C_ALG -> {
+                final var crc = new CRC32C();
+                int read;
+                while ((read = data.read(buffer)) != -1) crc.update(buffer, 0, read);
+                yield Base64.getEncoder().encodeToString(toBeInt((int) crc.getValue()));
+            }
+            case CRC32_ALG -> {
+                final var crc = new java.util.zip.CRC32();
+                int read;
+                while ((read = data.read(buffer)) != -1) crc.update(buffer, 0, read);
+                yield Base64.getEncoder().encodeToString(toBeInt((int) crc.getValue()));
+            }
+            case SHA256_ALG -> Base64.getEncoder().encodeToString(digest(data, "SHA-256", buffer));
+            case SHA1_ALG -> Base64.getEncoder().encodeToString(digest(data, "SHA-1", buffer));
+            default -> throw new S3Exception(S3Exception.INVALID_ARGUMENT,
+                    "Unsupported checksum algorithm: " + algorithm, 400);
+        };
+    }
+
+
     private static byte[] toBeInt(final int value) {
         return new byte[]{
             (byte) (value >> 24),
@@ -121,6 +147,18 @@ public final class IntegrityChecker {
     private static byte[] digest(final String algorithm, final byte[] data) {
         try {
             return MessageDigest.getInstance(algorithm).digest(data);
+        } catch (final NoSuchAlgorithmException ex) {
+            throw new IllegalStateException(algorithm + " unavailable", ex);
+        }
+    }
+
+    private static byte[] digest(final InputStream data, final String algorithm, final byte[] buffer)
+            throws IOException {
+        try {
+            final MessageDigest digest = MessageDigest.getInstance(algorithm);
+            int read;
+            while ((read = data.read(buffer)) != -1) digest.update(buffer, 0, read);
+            return digest.digest();
         } catch (final NoSuchAlgorithmException ex) {
             throw new IllegalStateException(algorithm + " unavailable", ex);
         }

@@ -15,6 +15,7 @@ import jakarta.inject.Singleton;
 import org.midnightbsd.leonardo.storage.layout.StorageLayout;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
@@ -42,6 +43,38 @@ public final class ObjectPayloadStore {
 
     /** Result of a streamed write. */
     public record WriteResult(String etag, long size) {}
+
+    /** Streams an object payload to disk while calculating its ETag and size. */
+    public WriteResult write(final String bucket, final String objectId, final InputStream data)
+            throws IOException {
+        final Path target = layout.objectDataFile(bucket, objectId);
+        final java.security.MessageDigest digest;
+        try {
+            digest = java.security.MessageDigest.getInstance("MD5");
+        } catch (final NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("MD5 unavailable", ex);
+        }
+        final long[] size = {0};
+        writer.write(target, out -> {
+            try {
+                final byte[] buffer = new byte[8192];
+                int read;
+                while ((read = data.read(buffer)) != -1) {
+                    out.write(buffer, 0, read);
+                    digest.update(buffer, 0, read);
+                    size[0] += read;
+                }
+            } catch (final IOException ex) {
+                throw new UncheckedIOException(ex);
+            }
+        });
+        return new WriteResult(HexFormat.of().formatHex(digest.digest()), size[0]);
+    }
+
+    /** Opens a stored payload for streaming verification or delivery. */
+    public InputStream open(final String bucket, final String objectId) throws IOException {
+        return Files.newInputStream(layout.objectDataFile(bucket, objectId));
+    }
 
     private final StorageLayout layout;
     private final AtomicFileWriter writer;
