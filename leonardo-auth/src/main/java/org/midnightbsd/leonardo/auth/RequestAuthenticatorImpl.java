@@ -228,16 +228,48 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
                 + payloadHash;
     }
 
-    private static String canonicalizeUri(final String rawPath) {
+    /**
+     * Builds the SigV4 canonical URI from the raw (percent-encoded, as sent on
+     * the wire) request path. S3 encodes each path segment exactly once, so the
+     * raw segment is decoded first and then re-encoded with the SigV4 character
+     * set; encoding the raw segment directly would turn {@code a%20b} into
+     * {@code a%2520b} and reject every key containing a space, {@code +},
+     * {@code &}, {@code =}, {@code :}, {@code @} or a non-ASCII character.
+     */
+    static String canonicalizeUri(final String rawPath) {
         if (rawPath == null || rawPath.isEmpty()) return "/";
         final String[] segments = rawPath.split("/", -1);
         final StringBuilder sb = new StringBuilder();
         for (int i = 0; i < segments.length; i++) {
             if (i > 0) sb.append('/');
-            sb.append(uriEncode(segments[i]));
+            sb.append(uriEncode(percentDecode(segments[i])));
         }
         final String result = sb.toString();
         return result.isEmpty() ? "/" : result;
+    }
+
+    /**
+     * Decodes {@code %XX} escapes in a path segment. Unlike
+     * {@link java.net.URLDecoder}, a literal {@code +} is kept as-is (it is a
+     * plain character in a path) and malformed escapes are left untouched.
+     */
+    static String percentDecode(final String segment) {
+        if (segment.indexOf('%') < 0) return segment;
+        final var out = new java.io.ByteArrayOutputStream(segment.length());
+        final byte[] raw = segment.getBytes(StandardCharsets.UTF_8);
+        for (int i = 0; i < raw.length; i++) {
+            if (raw[i] == '%' && i + 2 < raw.length) {
+                final int hi = Character.digit(raw[i + 1], 16);
+                final int lo = Character.digit(raw[i + 2], 16);
+                if (hi >= 0 && lo >= 0) {
+                    out.write((hi << 4) | lo);
+                    i += 2;
+                    continue;
+                }
+            }
+            out.write(raw[i]);
+        }
+        return out.toString(StandardCharsets.UTF_8);
     }
 
     private static String canonicalizeQueryString(final String rawQuery) {

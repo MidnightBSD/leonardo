@@ -88,6 +88,26 @@ final class ObjectCrudConformanceTest extends ConformanceBase {
     }
 
     @Test
+    void objectKeyWithSpacesAndNonAsciiCharactersRoundTrips() {
+        // The SDK percent-encodes the key once and signs that path; the server
+        // must canonicalise it the same way or SigV4 verification fails.
+        final String key = "odd key/with spaces & \u00fcn\u00efcode+a=b:c@d.json";
+        s3.putObject(r -> r.bucket(bucket).key(key).contentType(CTYPE), RequestBody.fromBytes(BODY));
+
+        final HeadObjectResponse head = s3.headObject(r -> r.bucket(bucket).key(key));
+        assertThat(head.contentLength()).isEqualTo(BODY.length);
+        assertThat(head.contentType()).isEqualTo(CTYPE);
+
+        final ResponseBytes<GetObjectResponse> got = s3.getObjectAsBytes(r -> r.bucket(bucket).key(key));
+        assertThat(got.asByteArray()).isEqualTo(BODY);
+
+        final ListObjectsV2Response listed = s3.listObjectsV2(r -> r.bucket(bucket).prefix("odd key/"));
+        assertThat(listed.contents()).extracting(S3Object::key).containsExactly(key);
+
+        s3.deleteObject(r -> r.bucket(bucket).key(key));
+    }
+
+    @Test
     void headObjectReturnsCorrectMetadata() {
         s3.putObject(r -> r.bucket(bucket).key(KEY).contentType(CTYPE),
                 RequestBody.fromBytes(BODY));
