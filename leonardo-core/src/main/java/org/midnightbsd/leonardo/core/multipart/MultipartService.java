@@ -32,6 +32,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
 
 /**
  * Business logic for multipart upload operations: CreateMultipartUpload,
@@ -459,11 +460,28 @@ public final class MultipartService {
         }
     }
 
+    /**
+     * Shape of every upload ID this server mints ({@link Ulid#generate()}:
+     * 26 Crockford base-32 characters). Anything else is rejected before it
+     * can reach the filesystem.
+     */
+    static final Pattern UPLOAD_ID_PATTERN = Pattern.compile("^[0-9A-HJKMNP-TV-Z]{26}$");
+
+    static boolean isWellFormedUploadId(final String uploadId) {
+        return uploadId != null && UPLOAD_ID_PATTERN.matcher(uploadId).matches();
+    }
+
     private MultipartUpload requireUpload(final String bucket, final String uploadId) {
-        return uploadStore.read(bucket, uploadId)
-                .orElseThrow(() -> new S3Exception("NoSuchUpload",
-                        "The specified upload does not exist. The upload ID may be invalid, "
-                        + "or the upload may have been aborted or completed.", 404));
+        if (!isWellFormedUploadId(uploadId)) {
+            throw noSuchUpload();
+        }
+        return uploadStore.read(bucket, uploadId).orElseThrow(MultipartService::noSuchUpload);
+    }
+
+    private static S3Exception noSuchUpload() {
+        return new S3Exception("NoSuchUpload",
+                "The specified upload does not exist. The upload ID may be invalid, "
+                + "or the upload may have been aborted or completed.", 404);
     }
 
     private static void validateUploadKey(final MultipartUpload upload, final String key) {

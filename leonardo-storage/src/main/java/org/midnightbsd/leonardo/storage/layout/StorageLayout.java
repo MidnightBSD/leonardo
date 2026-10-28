@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.regex.Pattern;
 
 /**
  * Resolves paths within {@code base_dir} according to the on-disk layout from
@@ -70,15 +71,56 @@ public final class StorageLayout {
     }
 
     public Path objectDataFile(final String bucket, final String objectId) {
-        return bucketDataDir(bucket).resolve(objectId);
+        validatePathSegment("object id", objectId);
+        return containedChild(bucketDataDir(bucket), objectId);
     }
 
     public Path multipartUploadMetaFile(final String bucket, final String uploadId) {
-        return bucketUploadsMetaDir(bucket).resolve(uploadId + ".yaml");
+        validatePathSegment("upload id", uploadId);
+        return containedChild(bucketUploadsMetaDir(bucket), uploadId + ".yaml");
     }
 
     public Path multipartUploadPartsDir(final String uploadId) {
-        return multipartTmpDir().resolve(uploadId);
+        validatePathSegment("upload id", uploadId);
+        return containedChild(multipartTmpDir(), uploadId);
+    }
+
+    /**
+     * Characters permitted in a single identifier that becomes one path
+     * segment (object IDs, upload IDs). Rejects separators, NULs, leading
+     * dots and therefore {@code .} / {@code ..}; the explicit {@code ..}
+     * check below is belt-and-braces.
+     */
+    private static final Pattern SAFE_SEGMENT =
+            Pattern.compile("^[A-Za-z0-9_-][A-Za-z0-9._-]{0,255}$");
+
+    /**
+     * Validates an identifier that is used verbatim as a single path segment
+     * below a known directory.
+     *
+     * @throws IllegalArgumentException when the value is empty, contains a
+     *         path separator, NUL, {@code ..}, or starts with a dot
+     */
+    public static void validatePathSegment(final String what, final String value) {
+        if (value == null || value.isEmpty()) {
+            throw new IllegalArgumentException(what + " must not be empty");
+        }
+        if (!SAFE_SEGMENT.matcher(value).matches() || value.contains("..")) {
+            throw new IllegalArgumentException(what + " contains disallowed characters: " + value);
+        }
+    }
+
+    /**
+     * Resolves {@code child} against {@code dir} and guarantees the result is a
+     * strict descendant of {@code dir}. {@code dir} must already be absolute and
+     * normalised (every directory returned by this class is).
+     */
+    private static Path containedChild(final Path dir, final String child) {
+        final Path resolved = dir.resolve(child).normalize();
+        if (resolved.equals(dir) || !resolved.startsWith(dir)) {
+            throw new IllegalArgumentException("path escapes " + dir + ": " + child);
+        }
+        return resolved;
     }
 
     /**

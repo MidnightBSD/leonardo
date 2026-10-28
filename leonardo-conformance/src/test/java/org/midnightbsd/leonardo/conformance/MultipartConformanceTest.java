@@ -22,6 +22,7 @@ import software.amazon.awssdk.services.s3.model.ListMultipartUploadsResponse;
 import software.amazon.awssdk.services.s3.model.ListPartsResponse;
 import software.amazon.awssdk.services.s3.model.MultipartUpload;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.NoSuchUploadException;
 import software.amazon.awssdk.services.s3.model.UploadPartResponse;
 
 import java.util.Arrays;
@@ -63,6 +64,29 @@ final class MultipartConformanceTest extends ConformanceBase {
 
         assertThatThrownBy(() -> s3.headObject(r -> r.bucket(bucket).key(KEY)))
                 .isInstanceOf(NoSuchKeyException.class);
+    }
+
+    @Test
+    void malformedUploadIdsAreRejectedAsNoSuchUpload() {
+        final byte[] data = makeBytes(PART_SIZE, (byte) 0x01);
+        for (final String bad : List.of("../../etc/passwd", "/etc/passwd", "..", "not-a-ulid", "x")) {
+            assertThatThrownBy(() -> s3.uploadPart(
+                    r -> r.bucket(bucket).key(KEY).uploadId(bad).partNumber(1),
+                    RequestBody.fromBytes(data)))
+                    .as("UploadPart with %s", bad)
+                    .isInstanceOf(NoSuchUploadException.class);
+            assertThatThrownBy(() -> s3.listParts(r -> r.bucket(bucket).key(KEY).uploadId(bad)))
+                    .as("ListParts with %s", bad)
+                    .isInstanceOf(NoSuchUploadException.class);
+            assertThatThrownBy(() -> s3.abortMultipartUpload(r -> r.bucket(bucket).key(KEY).uploadId(bad)))
+                    .as("AbortMultipartUpload with %s", bad)
+                    .isInstanceOf(NoSuchUploadException.class);
+            assertThatThrownBy(() -> s3.completeMultipartUpload(r -> r.bucket(bucket).key(KEY).uploadId(bad)
+                    .multipartUpload(CompletedMultipartUpload.builder()
+                            .parts(CompletedPart.builder().partNumber(1).eTag("\"0\"").build()).build())))
+                    .as("CompleteMultipartUpload with %s", bad)
+                    .isInstanceOf(NoSuchUploadException.class);
+        }
     }
 
     // -------------------------------------------------------------------------
