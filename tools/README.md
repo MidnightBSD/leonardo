@@ -51,7 +51,7 @@ source credentials.
 | Content-Type | yes | |
 | User metadata (`x-amz-meta-*`) | yes | |
 | Object tags | yes | disable with `--no-tags` |
-| Cache-Control, Content-Encoding, Content-Disposition, Content-Language, Expires | sent | Leonardo stores only Content-Type and user metadata today, so these do not survive the copy |
+| Cache-Control, Content-Encoding, Content-Disposition, Content-Language, Expires | yes | |
 | Object version history and delete markers | with `--versions` | replayed oldest to newest; the destination bucket has versioning enabled first |
 | Bucket versioning, tagging, CORS, lifecycle | yes | choose with `--bucket-config versioning,tagging,cors,lifecycle,policy` or `none` |
 | Bucket policy | opt-in | add `policy` to `--bucket-config`; review MinIO policies first, their principals may not map onto Leonardo identities |

@@ -83,6 +83,23 @@ public final class MultipartService {
             final String contentType,
             final Map<String, String> userMetadata,
             final String callerObjectId) throws IOException {
+        return createMultipartUpload(bucket, key, owner, contentType, userMetadata,
+                null, null, callerObjectId);
+    }
+
+    /**
+     * Starts a multipart upload, recording the tags and entity headers that
+     * CompleteMultipartUpload will put on the finished object.
+     */
+    public String createMultipartUpload(
+            final String bucket,
+            final String key,
+            final String owner,
+            final String contentType,
+            final Map<String, String> userMetadata,
+            final Map<String, String> tags,
+            final ObjectMetadata.ContentHeaders contentHeaders,
+            final String callerObjectId) throws IOException {
         ensureBucketExists(bucket);
 
         final String uploadId = Ulid.generate();
@@ -94,7 +111,9 @@ public final class MultipartService {
                         ? contentType : "application/octet-stream",
                 Instant.now(), userMetadata,
                 callerObjectId != null && !callerObjectId.isEmpty() ? callerObjectId : null,
-                List.of());
+                List.of(),
+                tags != null && !tags.isEmpty() ? tags : null,
+                contentHeaders);
 
         uploadStore.write(upload);
         return uploadId;
@@ -273,8 +292,8 @@ public final class MultipartService {
             final var meta = new ObjectMetadata(
                     key, objectId, totalSize, upload.contentType(), etag,
                     now, now, "STANDARD",
-                    null, upload.userMetadata(), null, "private", false, null,
-                    null, null, ordered.size());
+                    null, upload.userMetadata(), upload.tags(), "private", false, null,
+                    null, null, ordered.size(), upload.contentHeaders());
             metaStore.write(bucket, meta);
         } finally {
             objectLock.writeLock().unlock();
@@ -478,7 +497,8 @@ public final class MultipartService {
             uploadStore.write(new MultipartUpload(
                     current.uploadId(), current.bucket(), current.key(), current.objectId(),
                     current.owner(), current.contentType(), current.initiated(),
-                    current.userMetadata(), current.callerObjectId(), parts));
+                    current.userMetadata(), current.callerObjectId(), parts,
+                    current.tags(), current.contentHeaders()));
         } finally {
             lock.writeLock().unlock();
         }

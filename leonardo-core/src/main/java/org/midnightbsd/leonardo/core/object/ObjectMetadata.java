@@ -41,7 +41,8 @@ public record ObjectMetadata(
         RetentionConfig retention,
         String versionId,          // null when versioning is Disabled/Suspended
         Map<String, String> checksums,
-        Integer partsCount
+        Integer partsCount,
+        ContentHeaders contentHeaders   // null when the client supplied none
 ) {
 
     public record ObjectVersion(
@@ -54,34 +55,80 @@ public record ObjectMetadata(
 
     public record RetentionConfig(String mode, Instant retainUntilDate) {}
 
+    /**
+     * Standard HTTP entity headers supplied on PutObject / CreateMultipartUpload
+     * and echoed back on GetObject / HeadObject, as S3 does. All fields are
+     * optional; {@link #of} returns {@code null} when none is set so that
+     * metadata files for objects without any of them stay unchanged.
+     */
+    public record ContentHeaders(
+            String cacheControl,
+            String contentDisposition,
+            String contentEncoding,
+            String contentLanguage,
+            String expires) {
+
+        public static ContentHeaders of(
+                final String cacheControl,
+                final String contentDisposition,
+                final String contentEncoding,
+                final String contentLanguage,
+                final String expires) {
+            final ContentHeaders headers = new ContentHeaders(
+                    blankToNull(cacheControl), blankToNull(contentDisposition),
+                    blankToNull(contentEncoding), blankToNull(contentLanguage),
+                    blankToNull(expires));
+            return headers.isEmpty() ? null : headers;
+        }
+
+        public boolean isEmpty() {
+            return cacheControl == null && contentDisposition == null && contentEncoding == null
+                    && contentLanguage == null && expires == null;
+        }
+
+        private static String blankToNull(final String value) {
+            return value == null || value.isBlank() ? null : value;
+        }
+    }
+
+    /** True for the delete-marker form of this record: no payload behind it. */
+    public boolean isDeleteMarker() {
+        return objectId == null || objectId.isEmpty();
+    }
+
     public ObjectMetadata withTags(final Map<String, String> newTags) {
         return new ObjectMetadata(key, objectId, size, contentType, etag,
                 createdAt, lastModified, storageClass, versions, userMetadata,
-                newTags, aclCanned, legalHold, retention, versionId, checksums, partsCount);
+                newTags, aclCanned, legalHold, retention, versionId, checksums, partsCount,
+                contentHeaders);
     }
 
     public ObjectMetadata withAclCanned(final String newAclCanned) {
         return new ObjectMetadata(key, objectId, size, contentType, etag,
                 createdAt, lastModified, storageClass, versions, userMetadata,
-                tags, newAclCanned, legalHold, retention, versionId, checksums, partsCount);
+                tags, newAclCanned, legalHold, retention, versionId, checksums, partsCount,
+                contentHeaders);
     }
 
     public ObjectMetadata withLegalHold(final boolean newLegalHold) {
         return new ObjectMetadata(key, objectId, size, contentType, etag,
                 createdAt, lastModified, storageClass, versions, userMetadata,
-                tags, aclCanned, newLegalHold, retention, versionId, checksums, partsCount);
+                tags, aclCanned, newLegalHold, retention, versionId, checksums, partsCount,
+                contentHeaders);
     }
 
     public ObjectMetadata withRetention(final RetentionConfig newRetention) {
         return new ObjectMetadata(key, objectId, size, contentType, etag,
                 createdAt, lastModified, storageClass, versions, userMetadata,
-                tags, aclCanned, legalHold, newRetention, versionId, checksums, partsCount);
+                tags, aclCanned, legalHold, newRetention, versionId, checksums, partsCount,
+                contentHeaders);
     }
 
     public ObjectMetadata withVersionId(final String newVersionId) {
         return new ObjectMetadata(key, objectId, size, contentType, etag,
                 createdAt, lastModified, storageClass, versions, userMetadata,
-                tags, aclCanned, legalHold, retention, newVersionId, checksums, partsCount);
+                tags, aclCanned, legalHold, retention, newVersionId, checksums, partsCount,
+                contentHeaders);
     }
 
     /**

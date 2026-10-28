@@ -77,7 +77,7 @@ final class ObjectControllerRangeTest {
     void successfulIfMatchTakesPrecedenceOverIfUnmodifiedSince() {
         final ObjectMetadata meta = new ObjectMetadata("key", "id", 3, "text/plain", "\"etag\"",
                 Instant.EPOCH, Instant.parse("2026-08-20T00:00:00Z"), "STANDARD",
-                null, null, null, "private", false, null, null, null, null);
+                null, null, null, "private", false, null, null, null, null, null);
 
         assertThat(ObjectController.checkConditionals(meta, "\"etag\"", "", "",
                 "Wed, 01 Jan 2020 00:00:00 GMT")).isNull();
@@ -87,7 +87,7 @@ final class ObjectControllerRangeTest {
     void headObjectAppliesConditionalHeaders() {
         final ObjectMetadata meta = new ObjectMetadata("key", "id", 3, "text/plain", "\"etag\"",
                 Instant.EPOCH, Instant.parse("2026-08-20T00:00:00Z"), "STANDARD",
-                null, null, null, "private", false, null, null, null, null);
+                null, null, null, "private", false, null, null, null, null, null);
         final ObjectService service = mock(ObjectService.class);
         when(service.headObject("bucket", "key")).thenReturn(meta);
         final ObjectController controller = new ObjectController(service, mock(MultipartService.class));

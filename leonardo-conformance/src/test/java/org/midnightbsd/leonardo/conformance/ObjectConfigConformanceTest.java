@@ -47,6 +47,18 @@ final class ObjectConfigConformanceTest extends ConformanceBase {
     // -------------------------------------------------------------------------
 
     @Test
+    void putObjectTaggingHeaderStoresTags() {
+        s3.putObject(r -> r.bucket(bucket).key("tagged").tagging("env=test&team=stor age"),
+                RequestBody.fromBytes("x".getBytes()));
+
+        final GetObjectTaggingResponse got = s3.getObjectTagging(r -> r.bucket(bucket).key("tagged"));
+        final var tagMap = got.tagSet().stream()
+                .collect(java.util.stream.Collectors.toMap(Tag::key, Tag::value));
+        assertThat(tagMap).containsExactlyInAnyOrderEntriesOf(
+                java.util.Map.of("env", "test", "team", "stor age"));
+    }
+
+    @Test
     void objectTaggingRoundTrip() {
         s3.putObjectTagging(r -> r.bucket(bucket).key(KEY).tagging(Tagging.builder()
                 .tagSet(

@@ -13,6 +13,7 @@ package org.midnightbsd.leonardo.conformance;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.model.BucketVersioningStatus;
@@ -137,6 +138,37 @@ final class VersioningConformanceTest extends ConformanceBase {
         final List<DeleteMarkerEntry> markers = history.deleteMarkers();
         assertThat(markers).hasSize(1);
         assertThat(markers.get(0).key()).isEqualTo(KEY);
+    }
+
+    @Test
+    void deleteMarkerStaysADeleteMarkerAfterANewerPut() {
+        s3.putObject(req -> req.bucket(bucket).key(KEY), RequestBody.fromBytes("v1".getBytes()));
+        final String markerId = s3.deleteObject(r -> r.bucket(bucket).key(KEY)).versionId();
+        s3.putObject(req -> req.bucket(bucket).key(KEY), RequestBody.fromBytes("v2".getBytes()));
+
+        final ListObjectVersionsResponse history =
+                s3.listObjectVersions(r -> r.bucket(bucket).prefix(KEY));
+        assertThat(history.deleteMarkers()).extracting(DeleteMarkerEntry::versionId)
+                .containsExactly(markerId);
+        assertThat(history.deleteMarkers().get(0).isLatest()).isFalse();
+        assertThat(history.versions()).hasSize(2);
+        assertThat(history.versions()).allSatisfy(v -> assertThat(v.size()).isEqualTo(2L));
+
+        // S3 answers GET and HEAD on a delete marker's version id with 405.
+        assertThatThrownBy(() -> s3.getObject(r -> r.bucket(bucket).key(KEY).versionId(markerId)))
+                .isInstanceOf(S3Exception.class)
+                .satisfies(ex -> assertThat(((S3Exception) ex).statusCode()).isEqualTo(405));
+        assertThatThrownBy(() -> s3.headObject(r -> r.bucket(bucket).key(KEY).versionId(markerId)))
+                .isInstanceOf(S3Exception.class)
+                .satisfies(ex -> assertThat(((S3Exception) ex).statusCode()).isEqualTo(405));
+
+        // Removing the marker by version id leaves the two real versions intact.
+        s3.deleteObject(r -> r.bucket(bucket).key(KEY).versionId(markerId));
+        final ListObjectVersionsResponse after =
+                s3.listObjectVersions(r -> r.bucket(bucket).prefix(KEY));
+        assertThat(after.deleteMarkers()).isEmpty();
+        assertThat(after.versions()).hasSize(2);
+        assertThat(s3.getObjectAsBytes(r -> r.bucket(bucket).key(KEY)).asUtf8String()).isEqualTo("v2");
     }
 
     @Test

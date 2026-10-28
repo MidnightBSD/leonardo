@@ -105,7 +105,7 @@ public final class ObjectMetadataStore {
                         v.etag(), v.createdAt(), v.createdAt(), meta.storageClass(),
                         null, meta.userMetadata(), meta.tags(), meta.aclCanned(),
                         meta.legalHold(), meta.retention(), v.versionId(),
-                        meta.checksums(), meta.partsCount());
+                        meta.checksums(), meta.partsCount(), meta.contentHeaders());
                 return Optional.of(versioned);
             }
         }

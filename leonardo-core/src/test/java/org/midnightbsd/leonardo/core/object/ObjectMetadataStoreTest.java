@@ -33,7 +33,7 @@ final class ObjectMetadataStoreTest {
                                 "v2-etag", false, now.minusSeconds(1)),
                         new ObjectMetadata.ObjectVersion("v1", "v1-data", 1,
                                 "v1-etag", false, now.minusSeconds(2))),
-                null, null, "private", false, null, "v3", null, null));
+                null, null, "private", false, null, "v3", null, null, null));
 
         final ObjectMetadataStore.ListVersionsPage first =
                 store.listVersions("bucket", null, null, 1, null, null);
