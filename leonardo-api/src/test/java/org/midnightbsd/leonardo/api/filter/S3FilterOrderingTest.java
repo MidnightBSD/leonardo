@@ -11,19 +11,56 @@
  */
 package org.midnightbsd.leonardo.api.filter;
 
+import io.micronaut.http.HttpHeaders;
+import io.micronaut.http.HttpRequest;
+import io.micronaut.http.HttpResponse;
+import io.micronaut.http.HttpStatus;
+import io.micronaut.http.MutableHttpResponse;
+import io.micronaut.http.filter.ServerFilterChain;
 import org.junit.jupiter.api.Test;
 import org.midnightbsd.leonardo.auth.RequestAuthenticator;
 
+import java.util.Optional;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.midnightbsd.leonardo.api.filter.FilterTestSupport.first;
 
 final class S3FilterOrderingTest {
 
+    private static final RequestAuthenticator DENY_ALL = (method, uri, headers) -> Optional.empty();
+    private static final ServerFilterChain NEVER_REACHED = request -> {
+        throw new AssertionError("chain must not proceed for a rejected request");
+    };
+
     @Test
     void authenticatesBeforeVirtualHostRoutingChangesTheSignedUri() {
-        final RequestAuthenticator noOpAuthenticator = (method, uri, headers) -> java.util.Optional.empty();
-        final S3AuthenticationFilter authentication = new S3AuthenticationFilter(noOpAuthenticator);
+        final S3AuthenticationFilter authentication = new S3AuthenticationFilter(DENY_ALL);
         final VirtualHostRoutingFilter routing = new VirtualHostRoutingFilter("s3.local");
 
         assertThat(authentication.getOrder()).isLessThan(routing.getOrder());
+    }
+
+    @Test
+    void rejectedRequestWithUnreadBodyClosesTheConnection() {
+        // The filter answers before the body is read. Left on a keep-alive
+        // connection, those bytes would be parsed as the next request.
+        final S3AuthenticationFilter filter = new S3AuthenticationFilter(DENY_ALL);
+        final HttpRequest<String> put = HttpRequest.PUT("/bucket/key", "xyz")
+                .header(HttpHeaders.CONTENT_LENGTH, "3");
+
+        final HttpResponse<?> denied = first(filter.doFilter(put, NEVER_REACHED));
+
+        assertThat(denied.code()).isEqualTo(HttpStatus.FORBIDDEN.getCode());
+        assertThat(denied.getHeaders().get(HttpHeaders.CONNECTION)).isEqualTo("close");
+    }
+
+    @Test
+    void rejectedRequestWithoutBodyKeepsTheConnection() {
+        final S3AuthenticationFilter filter = new S3AuthenticationFilter(DENY_ALL);
+
+        final HttpResponse<?> denied = first(filter.doFilter(HttpRequest.GET("/bucket/key"), NEVER_REACHED));
+
+        assertThat(denied.code()).isEqualTo(HttpStatus.FORBIDDEN.getCode());
+        assertThat(denied.getHeaders().contains(HttpHeaders.CONNECTION)).isFalse();
     }
 }

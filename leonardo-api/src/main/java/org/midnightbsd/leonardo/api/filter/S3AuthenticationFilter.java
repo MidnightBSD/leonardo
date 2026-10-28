@@ -12,6 +12,7 @@
 package org.midnightbsd.leonardo.api.filter;
 
 import io.micronaut.core.async.publisher.Publishers;
+import io.micronaut.http.HttpHeaders;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
@@ -79,10 +80,16 @@ public final class S3AuthenticationFilter implements HttpServerFilter {
 
         if (authenticated.isEmpty()) {
             LOG.debug("Auth rejected: {} {}", request.getMethodName(), path);
-            return Publishers.just(
-                    HttpResponse.status(HttpStatus.FORBIDDEN)
-                            .contentType(MediaType.APPLICATION_XML)
-                            .body(ACCESS_DENIED_XML));
+            final MutableHttpResponse<String> denied = HttpResponse.status(HttpStatus.FORBIDDEN)
+                    .contentType(MediaType.APPLICATION_XML)
+                    .body(ACCESS_DENIED_XML);
+            if (hasBody(request)) {
+                // The body was never consumed. Left on a keep-alive connection
+                // it would be parsed as the start of the next request, so make
+                // the client reconnect, as S3 does.
+                denied.header(HttpHeaders.CONNECTION, "close");
+            }
+            return Publishers.just(denied);
         }
 
         final RequestAuthenticator.AuthenticationResult result = authenticated.get();
@@ -97,6 +104,11 @@ public final class S3AuthenticationFilter implements HttpServerFilter {
     @Override
     public int getOrder() {
         return -300;
+    }
+
+    static boolean hasBody(final HttpRequest<?> request) {
+        return request.getContentLength() > 0
+                || request.getHeaders().contains(HttpHeaders.TRANSFER_ENCODING);
     }
 
     private static Map<String, List<String>> lowercasedHeaders(final HttpRequest<?> request) {

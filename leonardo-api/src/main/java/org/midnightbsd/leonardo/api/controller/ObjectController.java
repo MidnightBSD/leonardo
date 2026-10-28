@@ -110,6 +110,7 @@ public final class ObjectController {
                     meta, ifMatch, ifNoneMatch, ifModifiedSince, ifUnmodifiedSince);
             if (conditional != null) return conditional;
             final MutableHttpResponse<?> resp = objectHeaders(HttpResponse.ok(), meta);
+            resp.contentType(meta.contentType());
             resp.header("Accept-Ranges", "bytes");
             if (meta.versionId() != null) {
                 resp.header("x-amz-version-id", meta.versionId());
@@ -125,7 +126,11 @@ public final class ObjectController {
     // GetObject / ListParts / GetObjectAttributes
     // -------------------------------------------------------------------------
 
-    @Get
+    // headRoute = false: Micronaut otherwise registers a second HEAD route for
+    // this method. Clients that send Accept: */* then hit getObject instead of
+    // headObject, and clients that send no Accept header (botocore, aws-cli)
+    // get a 400 from the duplicate-route handler.
+    @Get(headRoute = false)
     @Produces(MediaType.ALL)
     public HttpResponse<?> getObject(
             @PathVariable final String bucket,

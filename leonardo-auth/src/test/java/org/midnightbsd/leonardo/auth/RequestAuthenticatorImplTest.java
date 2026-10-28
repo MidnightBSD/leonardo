@@ -76,6 +76,45 @@ class RequestAuthenticatorImplTest {
     }
 
     @Test
+    void sigV4ObjectKeyWithEncodedCharactersAuthenticates() throws Exception {
+        // AWS SDKs and botocore percent-encode the key once and sign that path
+        // verbatim. Encoding it a second time on the server turned %20 into
+        // %2520 and rejected every key with a space, '+', '&', '=', ':' or
+        // a non-ASCII character.
+        final URI uri = URI.create("http://s3.local:9000/mybucket/odd%20key/"
+                + "with%20spaces%20%26%20%C3%BCn%C3%AFcode%2Ba%3Db%3Ac%40d.json");
+        final String payloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+        final Map<String, List<String>> headers = new HashMap<>();
+        headers.put("host",                  List.of("s3.local:9000"));
+        headers.put("x-amz-date",            List.of(TIMESTAMP));
+        headers.put("x-amz-content-sha256",  List.of(payloadHash));
+
+        final String signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+        headers.put("authorization",
+                List.of(buildSigV4Auth("PUT", uri, headers, signedHeaders, payloadHash)));
+
+        assertThat(authenticator.authenticate("PUT", uri, headers)).contains(IDENTITY);
+    }
+
+    @Test
+    void canonicalUriEncodesEachSegmentExactlyOnce() {
+        assertThat(RequestAuthenticatorImpl.canonicalizeUri("/b/a%20b/c%2Bd/%c3%bc"))
+                .isEqualTo("/b/a%20b/c%2Bd/%C3%BC");
+        assertThat(RequestAuthenticatorImpl.canonicalizeUri("/b/plain~file.txt"))
+                .isEqualTo("/b/plain~file.txt");
+        assertThat(RequestAuthenticatorImpl.canonicalizeUri("/b/100%25"))
+                .isEqualTo("/b/100%25");
+        // A literal '+' in a path is a plain character, not a space.
+        assertThat(RequestAuthenticatorImpl.canonicalizeUri("/b/a+b"))
+                .isEqualTo("/b/a%2Bb");
+        // Malformed escapes are kept literally and then encoded.
+        assertThat(RequestAuthenticatorImpl.canonicalizeUri("/b/bad%zz"))
+                .isEqualTo("/b/bad%25zz");
+        assertThat(RequestAuthenticatorImpl.canonicalizeUri("")).isEqualTo("/");
+    }
+
+    @Test
     void sigV4UppercaseSignedHeadersAuthenticates() throws Exception {
         final URI uri = URI.create("http://s3.local:9000/mybucket");
         final String payloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -256,15 +295,9 @@ class RequestAuthenticatorImplTest {
                 + payloadHash;
     }
 
+    /** Real clients sign the percent-encoded path exactly as it goes on the wire. */
     private static String canonicalizeUri(final String rawPath) {
-        if (rawPath == null || rawPath.isEmpty()) return "/";
-        final String[] segs = rawPath.split("/", -1);
-        final StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < segs.length; i++) {
-            if (i > 0) sb.append('/');
-            sb.append(RequestAuthenticatorImpl.uriEncode(segs[i]));
-        }
-        return sb.isEmpty() ? "/" : sb.toString();
+        return rawPath == null || rawPath.isEmpty() ? "/" : rawPath;
     }
 
     private static String canonicalizeQueryString(final String rawQuery) {
