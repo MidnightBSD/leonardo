@@ -8,6 +8,21 @@ micronaut:
   application:
     name: leonardo
   server:
+    # These keys belong to HttpServerConfiguration and bind under
+    # micronaut.server, not micronaut.server.netty; placed under netty they are
+    # silently ignored and Micronaut's 10 MiB / 5 minute defaults apply.
+    #
+    # 5 TiB matches the S3 single-PUT ceiling; smaller uploads use this path,
+    # multipart handles anything larger.
+    max-request-size: 5497558138880
+    # Only streaming routes (@Body InputStream) may use that ceiling. Routes
+    # that aggregate the body in memory are capped here, matching
+    # leonardo.limits.max_in_memory_body_bytes; larger bodies get 413.
+    max-request-buffer-size: 10485760
+    # Long enough for very slow PUTs of large objects over slow networks.
+    read-idle-timeout: 15m
+    write-idle-timeout: 15m
+    idle-timeout: 15m
     netty:
       # Two listeners: S3 API on 9000, admin-only on 9001.
       # When 'listeners' is non-empty Micronaut ignores micronaut.server.port.
@@ -20,13 +35,7 @@ micronaut:
           port: ${leonardo.server.admin_port:9001}
       # We stream large object payloads; let Netty handle them in chunks
       # rather than buffering into memory.
-      maxChunkSize: 8192
-      # 5 TiB matches the S3 single-PUT ceiling; smaller uploads use this
-      # path, multipart handles anything larger.
-      maxRequestSize: 5497558138880
-      # Long enough for very slow PUTs of large objects over slow networks.
-      readTimeout: 15m
-      idleTime: 15m
+      max-chunk-size: 8192
   metrics:
     enabled: true
     export:

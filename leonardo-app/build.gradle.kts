@@ -25,6 +25,16 @@ dependencies {
     implementation(project(":leonardo-core"))
 
     runtimeOnly("org.yaml:snakeyaml:${rootProject.extra["snakeYamlVersion"]}")
+
+    testAnnotationProcessor(platform("io.micronaut.platform:micronaut-platform:${rootProject.extra["micronautVersion"]}"))
+    testAnnotationProcessor("io.micronaut:micronaut-inject-java")
+    testImplementation(platform("io.micronaut.platform:micronaut-platform:${rootProject.extra["micronautVersion"]}"))
+    testImplementation("io.micronaut.test:micronaut-test-junit5")
+
+    // AWS SDK v2 drives the end-to-end server tests the same way real clients do.
+    testImplementation(platform("software.amazon.awssdk:bom:${rootProject.extra["awsSdkVersion"]}"))
+    testImplementation("software.amazon.awssdk:s3")
+    testImplementation("software.amazon.awssdk:url-connection-client")
 }
 
 application {
