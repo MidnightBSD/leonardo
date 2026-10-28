@@ -44,15 +44,19 @@ public final class ObjectService {
     private final ObjectMetadataStore metaStore;
     private final BucketMetadataStore bucketStore;
     private final ObjectPayloadStore payloadStore;
-    private final StripedLockManager locks = new StripedLockManager();
+    private final ObjectPublisher publisher;
+    private final StripedLockManager locks;
 
     public ObjectService(
             final ObjectMetadataStore metaStore,
             final BucketMetadataStore bucketStore,
-            final ObjectPayloadStore payloadStore) {
+            final ObjectPayloadStore payloadStore,
+            final ObjectPublisher publisher) {
         this.metaStore = metaStore;
         this.bucketStore = bucketStore;
         this.payloadStore = payloadStore;
+        this.publisher = publisher;
+        this.locks = publisher.locks();
     }
 
     // -------------------------------------------------------------------------
@@ -129,8 +133,6 @@ public final class ObjectService {
             throws IOException {
 
         ensureBucketExists(bucket);
-        final BucketMetadata bucketMeta = bucketStore.read(bucket)
-                .orElseThrow(() -> S3Exception.noSuchBucket(bucket));
 
         final String objectId = resolveObjectId(bucket, callerObjectId);
 
@@ -159,61 +161,20 @@ public final class ObjectService {
         }
         final Instant now = Instant.now();
 
-        final boolean versioningEnabled = bucketMeta.versioning() != null
-                && bucketMeta.versioning().status() == BucketMetadata.VersioningStatus.ENABLED;
-
-        final var lock = locks.lockFor(bucket + "/" + key);
-        lock.writeLock().lock();
-        try {
-            final var existing = metaStore.read(bucket, key);
-
-            // Enforce bucket immutability and WORM before overwrite
-            if (existing.isPresent()) {
-                if (bucketMeta.immutable()) {
-                    throw new S3Exception("BucketImmutable",
-                            "The bucket is configured as immutable; existing objects cannot be overwritten.", 403);
-                }
-                checkWormWrite(existing.get());
-            }
-
-            // Build versioned history
-            String newVersionId = null;
-            List<ObjectMetadata.ObjectVersion> newVersions = null;
-            if (versioningEnabled) {
-                newVersionId = Ulid.generate();
-                if (existing.isPresent()) {
-                    final ObjectMetadata prev = existing.get();
-                    // A delete marker that gets overwritten stays a delete marker
-                    // in the history; otherwise ListObjectVersions reports it as
-                    // a zero-byte version and GET on it fails.
-                    final var histEntry = new ObjectMetadata.ObjectVersion(
-                            prev.versionId() != null ? prev.versionId() : "null",
-                            prev.objectId(), prev.size(), prev.etag(),
-                            isDeleteMarker(prev), prev.lastModified());
-                    final var combined = new ArrayList<ObjectMetadata.ObjectVersion>();
-                    combined.add(histEntry);
-                    if (prev.versions() != null) combined.addAll(prev.versions());
-                    newVersions = Collections.unmodifiableList(combined);
-                }
-            }
-
-            final var meta = new ObjectMetadata(
-                    key, objectId, stored.size(),
-                    contentType != null && !contentType.isEmpty()
-                            ? contentType : "application/octet-stream",
-                    "\"" + etag + "\"",
-                    now, now, "STANDARD",
-                    newVersions, userMetadata,
-                    tags != null && !tags.isEmpty() ? tags : null,
-                    "private", false, null,
-                    newVersionId,
-                    checksums != null && !checksums.isEmpty() ? checksums : null, null,
-                    contentHeaders);
-            metaStore.write(bucket, meta);
-            return new PutResult(etag, newVersionId);
-        } finally {
-            lock.writeLock().unlock();
-        }
+        final var draft = new ObjectMetadata(
+                key, objectId, stored.size(),
+                contentType != null && !contentType.isEmpty()
+                        ? contentType : "application/octet-stream",
+                "\"" + etag + "\"",
+                now, now, "STANDARD",
+                null, userMetadata,
+                tags != null && !tags.isEmpty() ? tags : null,
+                "private", false, null,
+                null,
+                checksums != null && !checksums.isEmpty() ? checksums : null, null,
+                contentHeaders);
+        final String newVersionId = publisher.publish(bucket, draft);
+        return new PutResult(etag, newVersionId);
     }
 
     // -------------------------------------------------------------------------
@@ -330,16 +291,9 @@ public final class ObjectService {
                 // Create a delete marker instead of physically deleting
                 final String markerVersionId = Ulid.generate();
                 final Instant now = Instant.now();
-                final var combined = new ArrayList<ObjectMetadata.ObjectVersion>();
-                if (maybeOld.isPresent()) {
-                    final ObjectMetadata prev = maybeOld.get();
-                    final var histEntry = new ObjectMetadata.ObjectVersion(
-                            prev.versionId() != null ? prev.versionId() : "null",
-                            prev.objectId(), prev.size(), prev.etag(),
-                            isDeleteMarker(prev), prev.lastModified());
-                    combined.add(histEntry);
-                    if (prev.versions() != null) combined.addAll(prev.versions());
-                }
+                final List<ObjectMetadata.ObjectVersion> combined = maybeOld
+                        .map(ObjectPublisher::historyWith)
+                        .orElse(List.of());
 
                 // S3 requires a delete marker even when no live version exists.  The
                 // marker-only metadata is observable via ListObjectVersions and prevents
@@ -628,17 +582,6 @@ public final class ObjectService {
     // -------------------------------------------------------------------------
 
     /** Blocks writes (overwrites) when COMPLIANCE retention is active. */
-    private static void checkWormWrite(final ObjectMetadata meta) {
-        if (meta.retention() != null
-                && "COMPLIANCE".equals(meta.retention().mode())
-                && meta.retention().retainUntilDate() != null
-                && meta.retention().retainUntilDate().isAfter(Instant.now())) {
-            throw new S3Exception("AccessDenied",
-                    "Object is under COMPLIANCE retention and cannot be overwritten until "
-                            + meta.retention().retainUntilDate(), 403);
-        }
-    }
-
     /** Blocks deletes when legal hold or active retention prevents it. */
     private static void checkWormDelete(
             final ObjectMetadata meta, final boolean bypassGovernance) {
