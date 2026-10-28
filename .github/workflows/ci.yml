@@ -112,7 +112,9 @@ jobs:
           version: '4.0.4'
           shell: sh
           run: |
-            sudo /usr/sbin/mport config set mirror_region us
+            # UK mirror (discovery.midnightbsd.org): farther from the runners than
+            # the US host but historically more stable; US fetches timed out mid-install.
+            sudo /usr/sbin/mport config set mirror_region uk
             sudo /usr/sbin/mport install openjdk21-bin ||  true
             export JAVA_HOME=/usr/local/openjdk21
             export PATH="$JAVA_HOME/bin:$PATH"
