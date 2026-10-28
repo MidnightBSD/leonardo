@@ -41,12 +41,29 @@ final class S3FilterOrderingTest {
     }
 
     @Test
-    void rejectedRequestWithUnreadBodyClosesTheConnection() {
-        // The filter answers before the body is read. Left on a keep-alive
-        // connection, those bytes would be parsed as the next request.
+    void rejectedRequestWithUnreadBodyKeepsTheConnection() {
+        // The filter answers before the body is read. The unread bytes are
+        // drained server-side (RequestBodies.discard) rather than answered
+        // with Connection: close, which would reset the socket on the BSDs.
+        // StreamingUploadTest covers the live-connection behaviour.
         final S3AuthenticationFilter filter = new S3AuthenticationFilter(DENY_ALL);
         final HttpRequest<String> put = HttpRequest.PUT("/bucket/key", "xyz")
                 .header(HttpHeaders.CONTENT_LENGTH, "3");
+
+        final HttpResponse<?> denied = first(filter.doFilter(put, NEVER_REACHED));
+
+        assertThat(denied.code()).isEqualTo(HttpStatus.FORBIDDEN.getCode());
+        assertThat(denied.getHeaders().contains(HttpHeaders.CONNECTION)).isFalse();
+    }
+
+    @Test
+    void rejectedRequestAwaitingContinueClosesTheConnection() {
+        // The client has not sent the body and will not after a final status,
+        // so there is nothing to drain and the server must not wait for it.
+        final S3AuthenticationFilter filter = new S3AuthenticationFilter(DENY_ALL);
+        final HttpRequest<String> put = HttpRequest.PUT("/bucket/key", "xyz")
+                .header(HttpHeaders.CONTENT_LENGTH, "3")
+                .header(HttpHeaders.EXPECT, "100-continue");
 
         final HttpResponse<?> denied = first(filter.doFilter(put, NEVER_REACHED));
 

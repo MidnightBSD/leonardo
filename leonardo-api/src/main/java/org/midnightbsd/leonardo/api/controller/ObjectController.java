@@ -13,6 +13,7 @@ package org.midnightbsd.leonardo.api.controller;
 
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpRequest;
+import org.midnightbsd.leonardo.api.body.RequestBodies;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.MediaType;
@@ -292,6 +293,32 @@ public final class ObjectController {
             final HttpRequest<?> request) {
         // CopyObject, UploadPartCopy and canned-ACL PutObjectAcl carry no body.
         final InputStream body = requestBody != null ? requestBody : InputStream.nullInputStream();
+        // Whatever the outcome, close the stream: for a body the handler did
+        // not finish reading this makes Micronaut drain the remainder so the
+        // keep-alive connection stays usable (see RequestBodies).
+        try {
+            return dispatchPut(bucket, key, partNumber, uploadId, copySource, callerObjectId, contentType,
+                    contentMd5, cannedAcl, bypassGovernanceRetention, contentEncoding, payloadHash, body, request);
+        } finally {
+            RequestBodies.closeQuietly(body);
+        }
+    }
+
+    private HttpResponse<String> dispatchPut(
+            final String bucket,
+            final String key,
+            final int partNumber,
+            final String uploadId,
+            final String copySource,
+            final String callerObjectId,
+            final String contentType,
+            final String contentMd5,
+            final String cannedAcl,
+            final String bypassGovernanceRetention,
+            final String contentEncoding,
+            final String payloadHash,
+            final InputStream body,
+            final HttpRequest<?> request) {
         // Sub-resource dispatches before UploadPart check
         if (request.getParameters().contains("acl")) {
             return handlePutObjectAcl(bucket, key, readControlBody(body), cannedAcl);

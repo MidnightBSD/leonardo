@@ -21,6 +21,7 @@ import io.micronaut.http.MutableHttpResponse;
 import io.micronaut.http.annotation.Filter;
 import io.micronaut.http.filter.HttpServerFilter;
 import io.micronaut.http.filter.ServerFilterChain;
+import org.midnightbsd.leonardo.api.body.RequestBodies;
 import org.midnightbsd.leonardo.auth.RequestAuthenticator;
 import org.reactivestreams.Publisher;
 import org.slf4j.Logger;
@@ -84,10 +85,14 @@ public final class S3AuthenticationFilter implements HttpServerFilter {
                     .contentType(MediaType.APPLICATION_XML)
                     .body(ACCESS_DENIED_XML);
             if (hasBody(request)) {
-                // The body was never consumed. Left on a keep-alive connection
-                // it would be parsed as the start of the next request, so make
-                // the client reconnect, as S3 does.
-                denied.header(HttpHeaders.CONNECTION, "close");
+                // The body was never consumed. See RequestBodies: a client
+                // waiting for 100 Continue will not send it, so close; any
+                // other body is already in flight, so drain it instead.
+                if (RequestBodies.awaitingContinue(request)) {
+                    denied.header(HttpHeaders.CONNECTION, "close");
+                } else {
+                    RequestBodies.discard(request);
+                }
             }
             return Publishers.just(denied);
         }
