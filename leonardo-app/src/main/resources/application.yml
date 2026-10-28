@@ -15,6 +15,10 @@ micronaut:
     # 5 TiB matches the S3 single-PUT ceiling; smaller uploads use this path,
     # multipart handles anything larger.
     max-request-size: 5497558138880
+    # Only streaming routes (@Body InputStream) may use that ceiling. Routes
+    # that aggregate the body in memory are capped here, matching
+    # leonardo.limits.max_in_memory_body_bytes; larger bodies get 413.
+    max-request-buffer-size: 10485760
     # Long enough for very slow PUTs of large objects over slow networks.
     read-idle-timeout: 15m
     write-idle-timeout: 15m

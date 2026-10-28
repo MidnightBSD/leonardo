@@ -10,6 +10,7 @@
 package org.midnightbsd.leonardo.app;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.micronaut.http.server.HttpServerConfiguration;
 import io.micronaut.runtime.server.EmbeddedServer;
@@ -25,7 +26,9 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +40,9 @@ import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.Tag;
+import software.amazon.awssdk.services.s3.model.Tagging;
 
 /**
  * End-to-end checks of the production server configuration over a real socket.
@@ -148,6 +154,22 @@ class StreamingUploadTest implements TestPropertyProvider {
 
         final long size = s3.headObject(r -> r.bucket(BUCKET).key("twelve-mebibytes")).contentLength();
         assertThat(size).isEqualTo(data.length);
+    }
+
+    @Test
+    void aggregatedRouteRejectsBodyLargerThanInMemoryLimit() {
+        // PUT /{bucket}?tagging binds @Body Optional<String>, so Micronaut buffers
+        // the whole body; the buffer cap must stop that well below max-request-size.
+        final String oneMebibyte = "v".repeat(1024 * 1024);
+        final List<Tag> tags = IntStream.range(0, 11)
+                .mapToObj(i -> Tag.builder().key("k" + i).value(oneMebibyte).build())
+                .toList();
+
+        assertThatThrownBy(() -> s3.putBucketTagging(r -> r.bucket(BUCKET)
+                        .tagging(Tagging.builder().tagSet(tags).build())))
+                .isInstanceOf(S3Exception.class)
+                .extracting(ex -> ((S3Exception) ex).statusCode())
+                .isEqualTo(413);
     }
 
     @Test
