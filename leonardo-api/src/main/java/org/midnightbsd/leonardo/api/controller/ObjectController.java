@@ -554,7 +554,12 @@ public final class ObjectController {
             final String location = "/" + bucket + "/" + key;
             final String xml = S3Xml.completeMultipartUploadResult(
                     location, bucket, key, result.etag());
-            return HttpResponse.ok(xml).contentType(MediaType.APPLICATION_XML);
+            final MutableHttpResponse<String> resp = HttpResponse.ok(xml)
+                    .contentType(MediaType.APPLICATION_XML);
+            if (result.versionId() != null) {
+                resp.header("x-amz-version-id", result.versionId());
+            }
+            return resp;
         } catch (final S3Exception ex) {
             return BucketController.s3Error(ex);
         } catch (final IllegalArgumentException ex) {

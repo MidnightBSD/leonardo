@@ -13,6 +13,11 @@ package org.midnightbsd.leonardo.conformance;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.s3.model.UploadPartResponse;
+import software.amazon.awssdk.services.s3.model.CreateMultipartUploadResponse;
+import software.amazon.awssdk.services.s3.model.CompletedPart;
+import software.amazon.awssdk.services.s3.model.CompletedMultipartUpload;
+import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadResponse;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -138,6 +143,41 @@ final class VersioningConformanceTest extends ConformanceBase {
         final List<DeleteMarkerEntry> markers = history.deleteMarkers();
         assertThat(markers).hasSize(1);
         assertThat(markers.get(0).key()).isEqualTo(KEY);
+    }
+
+    @Test
+    void completeMultipartUploadCreatesAVersionAndKeepsHistory() {
+        final PutObjectResponse first = s3.putObject(req -> req.bucket(bucket).key(KEY),
+                RequestBody.fromBytes("v1".getBytes()));
+
+        final CreateMultipartUploadResponse created =
+                s3.createMultipartUpload(r -> r.bucket(bucket).key(KEY));
+        final UploadPartResponse part = s3.uploadPart(r -> r.bucket(bucket).key(KEY)
+                        .uploadId(created.uploadId()).partNumber(1),
+                RequestBody.fromBytes("v2 via multipart".getBytes()));
+        final CompleteMultipartUploadResponse completed = s3.completeMultipartUpload(r -> r
+                .bucket(bucket).key(KEY).uploadId(created.uploadId())
+                .multipartUpload(CompletedMultipartUpload.builder()
+                        .parts(CompletedPart.builder().partNumber(1).eTag(part.eTag()).build())
+                        .build()));
+        assertThat(completed.versionId()).isNotBlank().isNotEqualTo(first.versionId());
+
+        final ListObjectVersionsResponse history =
+                s3.listObjectVersions(r -> r.bucket(bucket).prefix(KEY));
+        assertThat(history.versions()).extracting(ObjectVersion::versionId)
+                .containsExactly(completed.versionId(), first.versionId());
+        assertThat(history.versions().get(0).isLatest()).isTrue();
+
+        assertThat(s3.getObjectAsBytes(r -> r.bucket(bucket).key(KEY)).asUtf8String())
+                .isEqualTo("v2 via multipart");
+        assertThat(s3.getObjectAsBytes(r -> r.bucket(bucket).key(KEY).versionId(first.versionId()))
+                .asUtf8String()).isEqualTo("v1");
+
+        // And a later PutObject keeps the multipart version in the history.
+        s3.putObject(req -> req.bucket(bucket).key(KEY), RequestBody.fromBytes("v3".getBytes()));
+        assertThat(s3.listObjectVersions(r -> r.bucket(bucket).prefix(KEY)).versions()).hasSize(3);
+        assertThat(s3.getObjectAsBytes(r -> r.bucket(bucket).key(KEY).versionId(completed.versionId()))
+                .asUtf8String()).isEqualTo("v2 via multipart");
     }
 
     @Test

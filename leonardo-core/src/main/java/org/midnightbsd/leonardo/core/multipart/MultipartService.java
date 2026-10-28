@@ -17,6 +17,7 @@ import org.midnightbsd.leonardo.core.Ulid;
 import org.midnightbsd.leonardo.core.bucket.BucketMetadataStore;
 import org.midnightbsd.leonardo.core.object.ObjectMetadata;
 import org.midnightbsd.leonardo.core.object.ObjectMetadataStore;
+import org.midnightbsd.leonardo.core.object.ObjectPublisher;
 import org.midnightbsd.leonardo.storage.ObjectPayloadStore;
 import org.midnightbsd.leonardo.storage.PartStore;
 import org.midnightbsd.leonardo.storage.lock.StripedLockManager;
@@ -54,19 +55,23 @@ public final class MultipartService {
     private final ObjectPayloadStore payloadStore;
     private final ObjectMetadataStore metaStore;
     private final BucketMetadataStore bucketStore;
-    private final StripedLockManager locks = new StripedLockManager();
+    private final ObjectPublisher publisher;
+    private final StripedLockManager locks;
 
     public MultipartService(
             final MultipartUploadStore uploadStore,
             final PartStore partStore,
             final ObjectPayloadStore payloadStore,
             final ObjectMetadataStore metaStore,
-            final BucketMetadataStore bucketStore) {
+            final BucketMetadataStore bucketStore,
+            final ObjectPublisher publisher) {
         this.uploadStore  = uploadStore;
         this.partStore    = partStore;
         this.payloadStore = payloadStore;
         this.metaStore    = metaStore;
         this.bucketStore  = bucketStore;
+        this.publisher    = publisher;
+        this.locks        = publisher.locks();
     }
 
     // -------------------------------------------------------------------------
@@ -211,7 +216,8 @@ public final class MultipartService {
      */
     public record PartRef(int partNumber, String etag) {}
 
-    public record CompleteResult(String etag, long size) {}
+    /** Result of CompleteMultipartUpload; {@code versionId} is null unless bucket versioning is enabled. */
+    public record CompleteResult(String etag, long size, String versionId) {}
 
     /**
      * Validates the provided parts list, assembles the final object payload by
@@ -284,20 +290,15 @@ public final class MultipartService {
         final long totalSize  = payloadStore.writeFromParts(bucket, objectId, partPaths);
         final String etag     = ObjectPayloadStore.computeMultipartEtag(partEtags);
 
-        // Step 4: write object metadata
+        // Step 4: publish object metadata through the same path as PutObject so
+        // versioning, immutability and retention apply to multipart objects too
         final Instant now = Instant.now();
-        final var objectLock = locks.lockFor(bucket + "/" + key);
-        objectLock.writeLock().lock();
-        try {
-            final var meta = new ObjectMetadata(
-                    key, objectId, totalSize, upload.contentType(), etag,
-                    now, now, "STANDARD",
-                    null, upload.userMetadata(), upload.tags(), "private", false, null,
-                    null, null, ordered.size(), upload.contentHeaders());
-            metaStore.write(bucket, meta);
-        } finally {
-            objectLock.writeLock().unlock();
-        }
+        final var draft = new ObjectMetadata(
+                key, objectId, totalSize, upload.contentType(), etag,
+                now, now, "STANDARD",
+                null, upload.userMetadata(), upload.tags(), "private", false, null,
+                null, null, ordered.size(), upload.contentHeaders());
+        final String versionId = publisher.publish(bucket, draft);
 
         // Step 5: clean up parts (best effort)
         try {
@@ -306,7 +307,7 @@ public final class MultipartService {
             LOG.warn("Failed to delete parts for upload '{}': {}", uploadId, ex.getMessage());
         }
 
-        return new CompleteResult(etag, totalSize);
+        return new CompleteResult(etag, totalSize, versionId);
     }
 
     // -------------------------------------------------------------------------
