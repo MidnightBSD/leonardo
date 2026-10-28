@@ -9,6 +9,7 @@ plugins {
 
 dependencies {
     api("org.yaml:snakeyaml:${rootProject.extra["snakeYamlVersion"]}")
+    api(platform("com.fasterxml.jackson:jackson-bom:${rootProject.extra["jacksonVersion"]}"))
     api("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${rootProject.extra["jacksonVersion"]}")
     api("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:${rootProject.extra["jacksonVersion"]}")
 }

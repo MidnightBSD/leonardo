@@ -1,7 +1,7 @@
 # MidnightBSD mports Makefile for Leonardo
 
 PORTNAME=	leonardo
-PORTVERSION=	0.1.0
+PORTVERSION=	0.1.1
 CATEGORIES=	net
 MASTER_SITES=	https://github.com/MidnightBSD/leonardo/releases/download/v${PORTVERSION}/
 DISTFILES=	leonardo-${PORTVERSION}.tar${EXTRACT_SUFX}

@@ -27,7 +27,7 @@ import java.util.concurrent.Callable;
 @Command(
         name = "leonardo-admin",
         mixinStandardHelpOptions = true,
-        version = "leonardo-admin 0.1.0-SNAPSHOT",
+        version = "leonardo-admin 0.1.1",
         description = "Operator CLI for Leonardo S3-compatible object storage.",
         subcommands = {
                 LeonardoAdminCli.VersionCommand.class
@@ -52,7 +52,7 @@ public final class LeonardoAdminCli implements Callable<Integer> {
     public static final class VersionCommand implements Callable<Integer> {
         @Override
         public Integer call() {
-            System.out.println("leonardo-admin 0.1.0-SNAPSHOT");
+            System.out.println("leonardo-admin 0.1.1");
             return 0;
         }
     }

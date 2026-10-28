@@ -12,6 +12,7 @@ dependencies {
     annotationProcessor("io.micronaut:micronaut-inject-java")
 
     api(platform("io.micronaut.platform:micronaut-platform:${rootProject.extra["micronautVersion"]}"))
+    api(platform("io.netty:netty-bom:${rootProject.extra["nettyVersion"]}"))
     api("io.micronaut:micronaut-http-server-netty")
     api("io.micronaut:micronaut-management")
     api(project(":leonardo-core"))

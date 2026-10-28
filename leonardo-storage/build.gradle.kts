@@ -15,6 +15,7 @@ dependencies {
     api("io.micronaut:micronaut-inject")
     api("jakarta.inject:jakarta.inject-api:2.0.1")
     api(project(":leonardo-yaml"))
+    api(platform("com.fasterxml.jackson:jackson-bom:${rootProject.extra["jacksonVersion"]}"))
     api("com.fasterxml.jackson.core:jackson-databind:${rootProject.extra["jacksonVersion"]}")
 
     testImplementation("net.jqwik:jqwik:${rootProject.extra["jqwikVersion"]}")

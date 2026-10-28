@@ -1,5 +1,5 @@
 Name: leonardo
-Version: 0.1.0
+Version: 0.1.1
 Release: 1%{?dist}
 Summary: S3-compatible object storage server
 License: Apache-2.0
@@ -69,5 +69,8 @@ chmod 0750 /var/lib/leonardo /var/log/leonardo
 %ghost %attr(0750,leonardo,leonardo) /var/log/leonardo
 
 %changelog
+* Wed Oct 28 2026 Lucas Holt <luke@foolishgames.com> - 0.1.1-1
+- Security dependency updates: Micronaut 4.10.22, Netty 4.2.19.Final, Jackson 2.21.8, Logback 1.6.6
+
 * Mon Jun 02 2026 Lucas Holt <luke@foolishgames.com> - 0.1.0-1
 - Initial package
