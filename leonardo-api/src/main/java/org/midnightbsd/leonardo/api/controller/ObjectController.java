@@ -11,6 +11,7 @@
  */
 package org.midnightbsd.leonardo.api.controller;
 
+import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
@@ -30,6 +31,7 @@ import io.micronaut.http.annotation.Put;
 import io.micronaut.http.annotation.QueryValue;
 import io.micronaut.scheduling.TaskExecutors;
 import io.micronaut.scheduling.annotation.ExecuteOn;
+import org.midnightbsd.leonardo.api.body.SizedStream;
 import org.midnightbsd.leonardo.core.IntegrityChecker;
 import org.midnightbsd.leonardo.core.S3Exception;
 import org.midnightbsd.leonardo.core.multipart.MultipartService;
@@ -176,7 +178,7 @@ public final class ObjectController {
                 return conditional;
             }
 
-            final MutableHttpResponse<InputStream> response;
+            final MutableHttpResponse<SizedStream> response;
 
             // Range request support
             if (!rangeHeader.isEmpty()) {
@@ -185,9 +187,10 @@ public final class ObjectController {
                     final long start = range[0];
                     final long end   = range[1];
                     result.data().skipNBytes(start);
-                    final InputStream slice = new LimitedInputStream(result.data(), end - start + 1);
+                    final long sliceLength = end - start + 1;
+                    final InputStream slice = new LimitedInputStream(result.data(), sliceLength);
                     response = HttpResponse.status(HttpStatus.PARTIAL_CONTENT, "Partial Content")
-                            .body(slice);
+                            .body(new SizedStream(slice, sliceLength));
                     objectHeaders(response, meta);
                     response.contentType(meta.contentType());
                     response.header("Content-Range",
@@ -201,7 +204,7 @@ public final class ObjectController {
                         .header("Content-Range", "bytes */" + meta.size());
             }
 
-            response = HttpResponse.ok(result.data());
+            response = HttpResponse.ok(new SizedStream(result.data(), meta.size()));
             objectHeaders(response, meta);
             response.contentType(meta.contentType());
             response.header("Content-Length", String.valueOf(meta.size()));
@@ -280,8 +283,10 @@ public final class ObjectController {
                 final String bypassGovernanceRetention,
             @Header(value = "content-encoding", defaultValue = "") final String contentEncoding,
             @Header(value = "x-amz-content-sha256", defaultValue = "") final String payloadHash,
-            @Body final InputStream body,
+            @Nullable @Body final InputStream requestBody,
             final HttpRequest<?> request) {
+        // CopyObject, UploadPartCopy and canned-ACL PutObjectAcl carry no body.
+        final InputStream body = requestBody != null ? requestBody : InputStream.nullInputStream();
         // Sub-resource dispatches before UploadPart check
         if (request.getParameters().contains("acl")) {
             return handlePutObjectAcl(bucket, key, readControlBody(body), cannedAcl);

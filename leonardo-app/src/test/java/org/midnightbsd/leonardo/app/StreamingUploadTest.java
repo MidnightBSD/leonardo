@@ -35,11 +35,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.ObjectCannedACL;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.Tag;
 import software.amazon.awssdk.services.s3.model.Tagging;
@@ -141,8 +144,38 @@ class StreamingUploadTest implements TestPropertyProvider {
 
         s3.putObject(r -> r.bucket(BUCKET).key("one-mebibyte"), RequestBody.fromBytes(data));
 
-        final byte[] got = s3.getObjectAsBytes(r -> r.bucket(BUCKET).key("one-mebibyte")).asByteArray();
-        assertThat(got).isEqualTo(data);
+        final ResponseBytes<GetObjectResponse> got =
+                s3.getObjectAsBytes(r -> r.bucket(BUCKET).key("one-mebibyte"));
+        assertThat(got.asByteArray()).isEqualTo(data);
+        // Streamed responses must still carry Content-Length and Content-Type.
+        assertThat(got.response().contentLength()).isEqualTo((long) data.length);
+        assertThat(got.response().contentType()).isEqualTo("application/octet-stream");
+
+        final ResponseBytes<GetObjectResponse> range = s3.getObjectAsBytes(
+                r -> r.bucket(BUCKET).key("one-mebibyte").range("bytes=10-73"));
+        assertThat(range.asByteArray()).hasSize(64);
+        assertThat(range.response().contentLength()).isEqualTo(64L);
+    }
+
+    @Test
+    void bodylessPutRequestsAreAccepted() {
+        s3.putObject(r -> r.bucket(BUCKET).key("source"), RequestBody.fromString("payload"));
+
+        // CopyObject and canned-ACL PutObjectAcl send no request body at all.
+        s3.copyObject(r -> r.sourceBucket(BUCKET).sourceKey("source")
+                .destinationBucket(BUCKET).destinationKey("copy"));
+        assertThat(s3.getObjectAsBytes(r -> r.bucket(BUCKET).key("copy")).asUtf8String())
+                .isEqualTo("payload");
+
+        s3.putObjectAcl(r -> r.bucket(BUCKET).key("source").acl(ObjectCannedACL.PRIVATE));
+
+        // UploadPartCopy likewise has no body.
+        final String uploadId = s3.createMultipartUpload(r -> r.bucket(BUCKET).key("copied-part")).uploadId();
+        final String etag = s3.uploadPartCopy(r -> r.sourceBucket(BUCKET).sourceKey("source")
+                .destinationBucket(BUCKET).destinationKey("copied-part")
+                .uploadId(uploadId).partNumber(1)).copyPartResult().eTag();
+        assertThat(etag).isNotBlank();
+        s3.abortMultipartUpload(r -> r.bucket(BUCKET).key("copied-part").uploadId(uploadId));
     }
 
     @Test

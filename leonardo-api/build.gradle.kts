@@ -24,6 +24,9 @@ dependencies {
     api(project(":leonardo-xml"))
     api(platform("com.fasterxml.jackson:jackson-bom:${rootProject.extra["jacksonVersion"]}"))
     api("com.fasterxml.jackson.core:jackson-databind")
+    // Micronaut's ByteBody classes carry JetBrains @Contract annotations; javac's
+    // -Xlint:classfile warns (and -Werror fails) when the annotation type is absent.
+    compileOnly("org.jetbrains:annotations:26.1.0")
 
     testAnnotationProcessor(platform("io.micronaut.platform:micronaut-platform:${rootProject.extra["micronautVersion"]}"))
     testAnnotationProcessor("io.micronaut:micronaut-inject-java")
