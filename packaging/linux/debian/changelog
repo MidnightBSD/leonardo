@@ -1,3 +1,10 @@
+leonardo (0.1.1-1) unstable; urgency=medium
+
+  * Security dependency updates: Micronaut 4.10.22, Netty 4.2.19.Final,
+    Jackson 2.21.8, Logback 1.6.6, SLF4J 2.0.20, SnakeYAML 2.5.
+
+ -- Lucas Holt <luke@foolishgames.com>  Wed, 28 Oct 2026 15:05:10 +0000
+
 leonardo (0.1.0-1) unstable; urgency=medium
 
   * Initial release.

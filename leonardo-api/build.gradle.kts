@@ -13,6 +13,7 @@ dependencies {
     annotationProcessor("io.micronaut.validation:micronaut-validation-processor")
 
     api(platform("io.micronaut.platform:micronaut-platform:${rootProject.extra["micronautVersion"]}"))
+    api(platform("io.netty:netty-bom:${rootProject.extra["nettyVersion"]}"))
     api("io.micronaut:micronaut-http-server-netty")
     api("io.micronaut:micronaut-inject")
     api("io.micronaut:micronaut-runtime")
@@ -21,6 +22,7 @@ dependencies {
     api(project(":leonardo-auth"))
     api(project(":leonardo-core"))
     api(project(":leonardo-xml"))
+    api(platform("com.fasterxml.jackson:jackson-bom:${rootProject.extra["jacksonVersion"]}"))
     api("com.fasterxml.jackson.core:jackson-databind")
 
     testAnnotationProcessor(platform("io.micronaut.platform:micronaut-platform:${rootProject.extra["micronautVersion"]}"))

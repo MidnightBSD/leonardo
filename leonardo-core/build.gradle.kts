@@ -17,5 +17,6 @@ dependencies {
     api(project(":leonardo-storage"))
     api(project(":leonardo-auth"))
     api(project(":leonardo-yaml"))
+    api(platform("com.fasterxml.jackson:jackson-bom:${rootProject.extra["jacksonVersion"]}"))
     api("com.fasterxml.jackson.core:jackson-databind:${rootProject.extra["jacksonVersion"]}")
 }

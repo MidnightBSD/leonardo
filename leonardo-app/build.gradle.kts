@@ -13,6 +13,7 @@ dependencies {
     annotationProcessor("io.micronaut:micronaut-inject-java")
 
     implementation(platform("io.micronaut.platform:micronaut-platform:${rootProject.extra["micronautVersion"]}"))
+    implementation(platform("io.netty:netty-bom:${rootProject.extra["nettyVersion"]}"))
     implementation("io.micronaut:micronaut-http-server-netty")
     implementation("io.micronaut:micronaut-runtime")
     implementation("io.micronaut.serde:micronaut-serde-jackson")

@@ -13,12 +13,12 @@ plugins {
 }
 
 // Versions shared across all modules. Bump here, propagates everywhere.
-val micronautVersion by extra("4.9.4")
-val nettyVersion by extra("4.1.128.Final")
-val jacksonVersion by extra("2.18.10")
-val snakeYamlVersion by extra("2.4")
-val slf4jVersion by extra("2.0.17")
-val logbackVersion by extra("1.5.17")
+val micronautVersion by extra("4.10.22")
+val nettyVersion by extra("4.2.19.Final")
+val jacksonVersion by extra("2.21.8")
+val snakeYamlVersion by extra("2.5")
+val slf4jVersion by extra("2.0.20")
+val logbackVersion by extra("1.6.6")
 val junitVersion by extra("5.11.4")
 val assertjVersion by extra("3.27.3")
 val jqwikVersion by extra("1.9.1")
@@ -27,7 +27,7 @@ val awsSdkVersion by extra("2.29.43")
 
 allprojects {
     group = "org.midnightbsd.leonardo"
-    version = "0.1.0"
+    version = "0.1.1"
 }
 
 subprojects {
