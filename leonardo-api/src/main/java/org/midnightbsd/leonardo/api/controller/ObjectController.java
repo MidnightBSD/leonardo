@@ -347,25 +347,14 @@ public final class ObjectController {
 
         // Verify integrity checksums provided by the client
         try {
-            final var userMetadata = new HashMap<String, String>();
-            request.getHeaders().forEachValue((name, value) -> {
-                if (name.toLowerCase().startsWith("x-amz-meta-")) {
-                    userMetadata.put(name.toLowerCase(), value);
-                }
-            });
-            final String storedContentEncoding = storageContentEncoding(contentEncoding);
-            if (storedContentEncoding != null) {
-                // aws-chunked is transport framing, not object metadata. Other
-                // encodings (for example gzip) describe the stored object and
-                // must be returned by GET and HEAD just as S3 does.
-                userMetadata.put("Content-Encoding", storedContentEncoding);
-            }
+            final Map<String, String> userMetadata = extractUserMetadata(request);
+            final Map<String, String> tags = parseTaggingHeader(request.getHeaders().get("x-amz-tagging"));
 
             final ObjectService.PutResult result = objectService.putObject(
                     bucket, key,
                     callerObjectId.isEmpty() ? null : callerObjectId,
                     contentType.isEmpty() ? null : contentType,
-                    userMetadata.isEmpty() ? null : userMetadata,
+                    userMetadata, tags, contentHeadersOf(request),
                     requestChecksums.isEmpty() ? null : requestChecksums,
                     contentMd5.isEmpty() ? null : contentMd5, payload);
             final MutableHttpResponse<String> putResp = HttpResponse.<String>ok()
@@ -531,18 +520,14 @@ public final class ObjectController {
             final String callerObjectId,
             final HttpRequest<?> request) {
         try {
-            final var userMetadata = new HashMap<String, String>();
-            request.getHeaders().forEachValue((name, value) -> {
-                if (name.toLowerCase().startsWith("x-amz-meta-")) {
-                    userMetadata.put(name.toLowerCase(), value);
-                }
-            });
             final String identity = request.getAttribute("s3.identity", String.class)
                     .orElse("anonymous");
             final String uploadId = multipartService.createMultipartUpload(
                     bucket, key, identity,
                     contentType.isEmpty() ? null : contentType,
-                    userMetadata.isEmpty() ? null : userMetadata,
+                    extractUserMetadata(request),
+                    parseTaggingHeader(request.getHeaders().get("x-amz-tagging")),
+                    contentHeadersOf(request),
                     callerObjectId.isEmpty() ? null : callerObjectId);
             return HttpResponse.ok(S3Xml.initiateMultipartUploadResult(bucket, key, uploadId))
                     .contentType(MediaType.APPLICATION_XML);
@@ -973,9 +958,72 @@ public final class ObjectController {
             response.header("Content-Length", String.valueOf(meta.size()));
         }
         if (meta.userMetadata() != null) {
+            // Objects written before entity headers were stored separately may
+            // carry a literal "Content-Encoding" entry here; it is emitted as-is.
             meta.userMetadata().forEach(response::header);
         }
+        final ObjectMetadata.ContentHeaders headers = meta.contentHeaders();
+        if (headers != null) {
+            if (headers.cacheControl() != null) response.header("Cache-Control", headers.cacheControl());
+            if (headers.contentDisposition() != null) response.header("Content-Disposition", headers.contentDisposition());
+            if (headers.contentEncoding() != null) response.header("Content-Encoding", headers.contentEncoding());
+            if (headers.contentLanguage() != null) response.header("Content-Language", headers.contentLanguage());
+            if (headers.expires() != null) response.header("Expires", headers.expires());
+        }
         return response;
+    }
+
+    /** Collects {@code x-amz-meta-*} headers, lower-cased; null when there are none. */
+    private static Map<String, String> extractUserMetadata(final HttpRequest<?> request) {
+        final var userMetadata = new HashMap<String, String>();
+        request.getHeaders().forEachValue((name, value) -> {
+            if (name.toLowerCase().startsWith("x-amz-meta-")) {
+                userMetadata.put(name.toLowerCase(), value);
+            }
+        });
+        return userMetadata.isEmpty() ? null : userMetadata;
+    }
+
+    /**
+     * Reads the standard entity headers S3 stores with an object. Content-Encoding
+     * is taken minus the aws-chunked transport token, which describes the
+     * request framing rather than the object.
+     */
+    private static ObjectMetadata.ContentHeaders contentHeadersOf(final HttpRequest<?> request) {
+        final var h = request.getHeaders();
+        return ObjectMetadata.ContentHeaders.of(
+                h.get("cache-control"),
+                h.get("content-disposition"),
+                storageContentEncoding(h.get("content-encoding")),
+                h.get("content-language"),
+                h.get("expires"));
+    }
+
+    /**
+     * Parses an {@code x-amz-tagging} header ({@code k1=v1&k2=v2}, URL-encoded)
+     * into a tag map. Returns null for an absent or empty header.
+     *
+     * @throws S3Exception InvalidTag when a pair has no key or a key repeats
+     */
+    static Map<String, String> parseTaggingHeader(final String header) {
+        if (header == null || header.isBlank()) return null;
+        final var tags = new java.util.LinkedHashMap<String, String>();
+        for (final String pair : header.split("&")) {
+            if (pair.isEmpty()) continue;
+            final int eq = pair.indexOf('=');
+            final String tagKey = URLDecoder.decode(eq < 0 ? pair : pair.substring(0, eq), StandardCharsets.UTF_8);
+            final String tagValue = eq < 0 ? "" : URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
+            if (tagKey.isEmpty()) {
+                throw new S3Exception("InvalidTag", "The TagKey you have provided is invalid", 400);
+            }
+            if (tags.put(tagKey, tagValue) != null) {
+                throw new S3Exception("InvalidTag", "Cannot provide multiple Tags with the same key", 400);
+            }
+        }
+        if (tags.size() > 10) {
+            throw new S3Exception("BadRequest", "Object tags cannot be greater than 10", 400);
+        }
+        return tags.isEmpty() ? null : tags;
     }
 
     private static Map<String, String> extractChecksums(final HttpRequest<?> request) {

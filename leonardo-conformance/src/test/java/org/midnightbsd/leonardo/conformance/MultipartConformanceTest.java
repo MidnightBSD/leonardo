@@ -101,6 +101,36 @@ final class MultipartConformanceTest extends ConformanceBase {
     // -------------------------------------------------------------------------
 
     @Test
+    void completeMultipartUploadKeepsEntityHeadersAndTags() {
+        final CreateMultipartUploadResponse created = s3.createMultipartUpload(r -> r
+                .bucket(bucket).key("mp-headers")
+                .contentType("text/plain")
+                .cacheControl("no-cache")
+                .contentDisposition("inline")
+                .contentLanguage("fr")
+                .tagging("stage=ci"));
+        final UploadPartResponse part = s3.uploadPart(r -> r.bucket(bucket).key("mp-headers")
+                        .uploadId(created.uploadId()).partNumber(1),
+                RequestBody.fromBytes("only part".getBytes()));
+        s3.completeMultipartUpload(r -> r.bucket(bucket).key("mp-headers")
+                .uploadId(created.uploadId())
+                .multipartUpload(CompletedMultipartUpload.builder()
+                        .parts(CompletedPart.builder().partNumber(1).eTag(part.eTag()).build())
+                        .build()));
+
+        final var head = s3.headObject(r -> r.bucket(bucket).key("mp-headers"));
+        assertThat(head.contentType()).isEqualTo("text/plain");
+        assertThat(head.cacheControl()).isEqualTo("no-cache");
+        assertThat(head.contentDisposition()).isEqualTo("inline");
+        assertThat(head.contentLanguage()).isEqualTo("fr");
+        assertThat(s3.getObjectTagging(r -> r.bucket(bucket).key("mp-headers")).tagSet())
+                .singleElement().satisfies(t -> {
+                    assertThat(t.key()).isEqualTo("stage");
+                    assertThat(t.value()).isEqualTo("ci");
+                });
+    }
+
+    @Test
     void completeMultipartUploadWithThreeParts() {
         final byte[] p1 = makeBytes(PART_SIZE, (byte) 0x11);
         final byte[] p2 = makeBytes(PART_SIZE, (byte) 0x22);

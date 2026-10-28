@@ -108,6 +108,42 @@ final class ObjectCrudConformanceTest extends ConformanceBase {
     }
 
     @Test
+    void entityHeadersAreStoredAndCopied() {
+        final String expires = "Fri, 13 Jan 2034 00:00:00 GMT";
+        s3.putObject(r -> r.bucket(bucket).key(KEY)
+                        .contentType(CTYPE)
+                        .cacheControl("max-age=60")
+                        .contentDisposition("attachment; filename=\"a.txt\"")
+                        .contentEncoding("gzip")
+                        .contentLanguage("en-GB")
+                        .expires(java.time.Instant.parse("2034-01-13T00:00:00Z"))
+                        .tagging("k=v"),
+                RequestBody.fromBytes(BODY));
+
+        final HeadObjectResponse head = s3.headObject(r -> r.bucket(bucket).key(KEY));
+        assertThat(head.cacheControl()).isEqualTo("max-age=60");
+        assertThat(head.contentDisposition()).isEqualTo("attachment; filename=\"a.txt\"");
+        assertThat(head.contentEncoding()).isEqualTo("gzip");
+        assertThat(head.contentLanguage()).isEqualTo("en-GB");
+        assertThat(head.expiresString()).isEqualTo(expires);
+        assertThat(head.contentType()).isEqualTo(CTYPE);
+
+        // CopyObject defaults to COPY for both metadata and tagging directives.
+        s3.copyObject(r -> r.sourceBucket(bucket).sourceKey(KEY)
+                .destinationBucket(bucket).destinationKey("copy"));
+        final HeadObjectResponse copy = s3.headObject(r -> r.bucket(bucket).key("copy"));
+        assertThat(copy.cacheControl()).isEqualTo("max-age=60");
+        assertThat(copy.contentEncoding()).isEqualTo("gzip");
+        assertThat(copy.contentLanguage()).isEqualTo("en-GB");
+        assertThat(copy.expiresString()).isEqualTo(expires);
+        assertThat(s3.getObjectTagging(r -> r.bucket(bucket).key("copy")).tagSet())
+                .singleElement().satisfies(t -> {
+                    assertThat(t.key()).isEqualTo("k");
+                    assertThat(t.value()).isEqualTo("v");
+                });
+    }
+
+    @Test
     void headObjectReturnsCorrectMetadata() {
         s3.putObject(r -> r.bucket(bucket).key(KEY).contentType(CTYPE),
                 RequestBody.fromBytes(BODY));

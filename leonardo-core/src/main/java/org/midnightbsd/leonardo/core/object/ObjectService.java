@@ -111,6 +111,22 @@ public final class ObjectService {
             final String contentType, final Map<String, String> userMetadata,
             final Map<String, String> checksums, final String contentMd5, final InputStream body)
             throws IOException {
+        return putObject(bucket, key, callerObjectId, contentType, userMetadata, null, null,
+                checksums, contentMd5, body);
+    }
+
+    /**
+     * Stores a streamed object with the full set of client-supplied attributes.
+     *
+     * @param tags            object tags from {@code x-amz-tagging}, or null
+     * @param contentHeaders  standard entity headers to echo on GET/HEAD, or null
+     */
+    public PutResult putObject(
+            final String bucket, final String key, final String callerObjectId,
+            final String contentType, final Map<String, String> userMetadata,
+            final Map<String, String> tags, final ObjectMetadata.ContentHeaders contentHeaders,
+            final Map<String, String> checksums, final String contentMd5, final InputStream body)
+            throws IOException {
 
         ensureBucketExists(bucket);
         final BucketMetadata bucketMeta = bucketStore.read(bucket)
@@ -167,10 +183,13 @@ public final class ObjectService {
                 newVersionId = Ulid.generate();
                 if (existing.isPresent()) {
                     final ObjectMetadata prev = existing.get();
+                    // A delete marker that gets overwritten stays a delete marker
+                    // in the history; otherwise ListObjectVersions reports it as
+                    // a zero-byte version and GET on it fails.
                     final var histEntry = new ObjectMetadata.ObjectVersion(
                             prev.versionId() != null ? prev.versionId() : "null",
                             prev.objectId(), prev.size(), prev.etag(),
-                            false, prev.lastModified());
+                            isDeleteMarker(prev), prev.lastModified());
                     final var combined = new ArrayList<ObjectMetadata.ObjectVersion>();
                     combined.add(histEntry);
                     if (prev.versions() != null) combined.addAll(prev.versions());
@@ -184,9 +203,12 @@ public final class ObjectService {
                             ? contentType : "application/octet-stream",
                     "\"" + etag + "\"",
                     now, now, "STANDARD",
-                    newVersions, userMetadata, null, "private", false, null,
+                    newVersions, userMetadata,
+                    tags != null && !tags.isEmpty() ? tags : null,
+                    "private", false, null,
                     newVersionId,
-                    checksums != null && !checksums.isEmpty() ? checksums : null, null);
+                    checksums != null && !checksums.isEmpty() ? checksums : null, null,
+                    contentHeaders);
             metaStore.write(bucket, meta);
             return new PutResult(etag, newVersionId);
         } finally {
@@ -216,7 +238,7 @@ public final class ObjectService {
         ensureBucketExists(bucket);
         final ObjectMetadata meta = metaStore.readVersion(bucket, key, versionId)
                 .orElseThrow(() -> S3Exception.noSuchKey(key));
-        if (meta.legalHold() && meta.versionId() == null) throw S3Exception.noSuchKey(key);
+        if (isDeleteMarker(meta)) throw deleteMarkerNotAllowed();
         return new GetStreamResult(meta, payloadStore.open(bucket, meta.objectId()));
     }
 
@@ -238,10 +260,7 @@ public final class ObjectService {
         ensureBucketExists(bucket);
         final ObjectMetadata meta = metaStore.readVersion(bucket, key, versionId)
                 .orElseThrow(() -> S3Exception.noSuchKey(key));
-        if (meta.legalHold() && meta.versionId() == null) {
-            // delete marker — treat as 404
-            throw S3Exception.noSuchKey(key);
-        }
+        if (isDeleteMarker(meta)) throw deleteMarkerNotAllowed();
         final byte[] data = payloadStore.read(bucket, meta.objectId());
         return new GetResult(meta, data);
     }
@@ -265,8 +284,10 @@ public final class ObjectService {
     public ObjectMetadata headObjectVersion(
             final String bucket, final String key, final String versionId) {
         ensureBucketExists(bucket);
-        return metaStore.readVersion(bucket, key, versionId)
+        final ObjectMetadata meta = metaStore.readVersion(bucket, key, versionId)
                 .orElseThrow(() -> S3Exception.noSuchKey(key));
+        if (isDeleteMarker(meta)) throw deleteMarkerNotAllowed();
+        return meta;
     }
 
     // -------------------------------------------------------------------------
@@ -315,7 +336,7 @@ public final class ObjectService {
                     final var histEntry = new ObjectMetadata.ObjectVersion(
                             prev.versionId() != null ? prev.versionId() : "null",
                             prev.objectId(), prev.size(), prev.etag(),
-                            false, prev.lastModified());
+                            isDeleteMarker(prev), prev.lastModified());
                     combined.add(histEntry);
                     if (prev.versions() != null) combined.addAll(prev.versions());
                 }
@@ -328,7 +349,7 @@ public final class ObjectService {
                         now, now, "STANDARD",
                         combined.isEmpty() ? null : Collections.unmodifiableList(combined),
                         null, null, "private", false, null,
-                        markerVersionId, null, null);
+                        markerVersionId, null, null, null);
                 metaStore.write(bucket, marker);
                 return new DeleteObjectResult(markerVersionId);
             }
@@ -375,12 +396,15 @@ public final class ObjectService {
                             newest.etag(), newest.createdAt(), newest.createdAt(),
                             meta.storageClass(), remaining, meta.userMetadata(),
                             meta.tags(), meta.aclCanned(), meta.legalHold(), meta.retention(),
-                            newest.versionId(), meta.checksums(), meta.partsCount());
+                            newest.versionId(), meta.checksums(), meta.partsCount(),
+                            meta.contentHeaders());
                     metaStore.write(bucket, promoted);
                 } else {
                     metaStore.delete(bucket, key);
                 }
-                payloadStore.delete(bucket, meta.objectId());
+                if (!isDeleteMarker(meta)) {
+                    payloadStore.delete(bucket, meta.objectId());
+                }
                 return;
             }
 
@@ -406,7 +430,7 @@ public final class ObjectService {
                     remaining.isEmpty() ? null : Collections.unmodifiableList(remaining),
                     meta.userMetadata(), meta.tags(), meta.aclCanned(),
                     meta.legalHold(), meta.retention(), meta.versionId(),
-                    meta.checksums(), meta.partsCount());
+                    meta.checksums(), meta.partsCount(), meta.contentHeaders());
             metaStore.write(bucket, updated);
             if (deletedObjectId != null && !deletedObjectId.isEmpty()) {
                 payloadStore.delete(bucket, deletedObjectId);
@@ -472,11 +496,14 @@ public final class ObjectService {
         final var lock = locks.lockFor(dstBucket + "/" + dstKey);
         lock.writeLock().lock();
         try {
+            // x-amz-metadata-directive and x-amz-tagging-directive default to
+            // COPY, so user metadata, entity headers and tags travel with the bytes.
             final var dstMeta = new ObjectMetadata(
                     dstKey, dstObjectId, srcMeta.size(),
                     srcMeta.contentType(), "\"" + etag + "\"",
                     now, now, "STANDARD",
-                    null, srcMeta.userMetadata(), null, "private", false, null, null, null, null);
+                    null, srcMeta.userMetadata(), srcMeta.tags(), "private", false, null,
+                    null, null, null, srcMeta.contentHeaders());
             metaStore.write(dstBucket, dstMeta);
         } finally {
             lock.writeLock().unlock();
@@ -552,7 +579,8 @@ public final class ObjectService {
                         srcMeta.createdAt(), now, srcMeta.storageClass(),
                         srcMeta.versions(), srcMeta.userMetadata(), srcMeta.tags(),
                         srcMeta.aclCanned(), srcMeta.legalHold(), srcMeta.retention(),
-                        srcMeta.versionId(), srcMeta.checksums(), srcMeta.partsCount());
+                        srcMeta.versionId(), srcMeta.checksums(), srcMeta.partsCount(),
+                        srcMeta.contentHeaders());
                 metaStore.write(bucket, dstMeta);
                 metaStore.delete(bucket, srcKey);
             } finally {
@@ -640,7 +668,13 @@ public final class ObjectService {
     // -------------------------------------------------------------------------
 
     private static boolean isDeleteMarker(final ObjectMetadata meta) {
-        return meta.objectId() == null || meta.objectId().isEmpty();
+        return meta.isDeleteMarker();
+    }
+
+    /** S3 answers GET/HEAD on a delete marker's version id with 405. */
+    private static S3Exception deleteMarkerNotAllowed() {
+        return new S3Exception("MethodNotAllowed",
+                "The specified method is not allowed against this resource.", 405);
     }
 
     private void ensureBucketExists(final String bucket) {

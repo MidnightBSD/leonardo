@@ -11,6 +11,8 @@
  */
 package org.midnightbsd.leonardo.core.multipart;
 
+import org.midnightbsd.leonardo.core.object.ObjectMetadata;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -36,7 +38,9 @@ public record MultipartUpload(
         Instant initiated,
         Map<String, String> userMetadata,
         String callerObjectId,
-        List<PartInfo> parts
+        List<PartInfo> parts,
+        Map<String, String> tags,                          // x-amz-tagging, or null
+        ObjectMetadata.ContentHeaders contentHeaders       // standard entity headers, or null
 ) {
 
     /** Per-part metadata, written after each successful UploadPart/UploadPartCopy. */
