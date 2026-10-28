@@ -26,6 +26,8 @@ import io.micronaut.http.annotation.Post;
 import io.micronaut.http.annotation.Produces;
 import io.micronaut.http.annotation.Put;
 import io.micronaut.http.annotation.QueryValue;
+import io.micronaut.scheduling.TaskExecutors;
+import io.micronaut.scheduling.annotation.ExecuteOn;
 import org.midnightbsd.leonardo.core.S3Exception;
 import org.midnightbsd.leonardo.core.bucket.BucketMetadata;
 import org.midnightbsd.leonardo.core.bucket.BucketService;
@@ -66,6 +68,7 @@ import java.util.List;
  *   <li>{@code POST /<bucket>?delete} — DeleteObjects</li>
  * </ul>
  */
+@ExecuteOn(TaskExecutors.BLOCKING)
 @Controller("/{bucket}")
 public final class BucketController {
 

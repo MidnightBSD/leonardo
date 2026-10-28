@@ -28,6 +28,8 @@ import io.micronaut.http.annotation.Post;
 import io.micronaut.http.annotation.Produces;
 import io.micronaut.http.annotation.Put;
 import io.micronaut.http.annotation.QueryValue;
+import io.micronaut.scheduling.TaskExecutors;
+import io.micronaut.scheduling.annotation.ExecuteOn;
 import org.midnightbsd.leonardo.core.IntegrityChecker;
 import org.midnightbsd.leonardo.core.S3Exception;
 import org.midnightbsd.leonardo.core.multipart.MultipartService;
@@ -64,6 +66,7 @@ import java.util.Map;
  *   <li>{@code DELETE} — DeleteObject, AbortMultipartUpload ({@code ?uploadId=})</li>
  * </ul>
  */
+@ExecuteOn(TaskExecutors.BLOCKING)
 @Controller("/{bucket}/{+key}")
 public final class ObjectController {
 
