@@ -46,6 +46,33 @@ public final class RequestBodies {
     }
 
     /**
+     * Largest body a rejected, unauthenticated request is drained for. Above
+     * this (or when the length is unknown) the connection is closed instead,
+     * so an anonymous client cannot make the server read bytes without bound.
+     */
+    public static final long UNAUTHENTICATED_DRAIN_LIMIT = 1024 * 1024;
+
+    /**
+     * Whether a rejected body should be drained rather than answered with
+     * {@code Connection: close}: the client must be sending it (no pending
+     * {@code 100 Continue}), its length must be declared, and it must be at
+     * most {@code limit} bytes.
+     */
+    public static boolean shouldDrain(final HttpRequest<?> request, final long limit) {
+        if (awaitingContinue(request)) {
+            return false;
+        }
+        final long length = request.getContentLength();
+        return length > 0 && length <= limit;
+    }
+
+    /** Whether the request announces a body (positive Content-Length or Transfer-Encoding). */
+    public static boolean hasBody(final HttpRequest<?> request) {
+        return request.getContentLength() > 0
+                || request.getHeaders().contains(HttpHeaders.TRANSFER_ENCODING);
+    }
+
+    /**
      * Whether the client sent {@code Expect: 100-continue} and therefore has
      * not transmitted the body yet. Only meaningful before anything has
      * consumed the body, since consuming it is what triggers the interim

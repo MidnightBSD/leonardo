@@ -18,6 +18,7 @@ import io.micronaut.http.HttpStatus;
 import io.micronaut.http.MutableHttpResponse;
 import io.micronaut.http.filter.ServerFilterChain;
 import org.junit.jupiter.api.Test;
+import org.midnightbsd.leonardo.api.body.RequestBodies;
 import org.midnightbsd.leonardo.auth.RequestAuthenticator;
 
 import java.util.Optional;
@@ -69,6 +70,22 @@ final class S3FilterOrderingTest {
 
         assertThat(denied.code()).isEqualTo(HttpStatus.FORBIDDEN.getCode());
         assertThat(denied.getHeaders().get(HttpHeaders.CONNECTION)).isEqualTo("close");
+    }
+
+    @Test
+    void rejectedRequestWithLargeOrChunkedBodyClosesTheConnection() {
+        // Draining is bounded for anonymous callers; anything above the limit
+        // or of unknown length is closed rather than read.
+        final S3AuthenticationFilter filter = new S3AuthenticationFilter(DENY_ALL);
+        final HttpRequest<String> large = HttpRequest.PUT("/bucket/key", "xyz")
+                .header(HttpHeaders.CONTENT_LENGTH, Long.toString(RequestBodies.UNAUTHENTICATED_DRAIN_LIMIT + 1));
+        final HttpRequest<String> chunked = HttpRequest.PUT("/bucket/key", "xyz")
+                .header(HttpHeaders.TRANSFER_ENCODING, "chunked");
+
+        assertThat(first(filter.doFilter(large, NEVER_REACHED)).getHeaders().get(HttpHeaders.CONNECTION))
+                .isEqualTo("close");
+        assertThat(first(filter.doFilter(chunked, NEVER_REACHED)).getHeaders().get(HttpHeaders.CONNECTION))
+                .isEqualTo("close");
     }
 
     @Test

@@ -12,8 +12,8 @@
 package org.midnightbsd.leonardo.api.controller;
 
 import io.micronaut.core.annotation.Nullable;
+import io.micronaut.http.HttpHeaders;
 import io.micronaut.http.HttpRequest;
-import org.midnightbsd.leonardo.api.body.RequestBodies;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.MediaType;
@@ -32,6 +32,8 @@ import io.micronaut.http.annotation.Put;
 import io.micronaut.http.annotation.QueryValue;
 import io.micronaut.scheduling.TaskExecutors;
 import io.micronaut.scheduling.annotation.ExecuteOn;
+import org.midnightbsd.leonardo.api.body.LazyRequestBody;
+import org.midnightbsd.leonardo.api.body.RequestBodies;
 import org.midnightbsd.leonardo.api.body.SizedStream;
 import org.midnightbsd.leonardo.core.IntegrityChecker;
 import org.midnightbsd.leonardo.core.S3Exception;
@@ -289,19 +291,31 @@ public final class ObjectController {
                 final String bypassGovernanceRetention,
             @Header(value = "content-encoding", defaultValue = "") final String contentEncoding,
             @Header(value = "x-amz-content-sha256", defaultValue = "") final String payloadHash,
-            @Nullable @Body final InputStream requestBody,
             final HttpRequest<?> request) {
-        // CopyObject, UploadPartCopy and canned-ACL PutObjectAcl carry no body.
-        final InputStream body = requestBody != null ? requestBody : InputStream.nullInputStream();
-        // Whatever the outcome, close the stream: for a body the handler did
-        // not finish reading this makes Micronaut drain the remainder so the
-        // keep-alive connection stays usable (see RequestBodies).
+        // The body is claimed only when a handler reads it (see LazyRequestBody):
+        // CopyObject, UploadPartCopy and canned-ACL PutObjectAcl never do, and a
+        // rejected PutObject/UploadPart must not be sent 100 Continue first.
+        final LazyRequestBody body = LazyRequestBody.of(request);
+        final HttpResponse<String> response;
         try {
-            return dispatchPut(bucket, key, partNumber, uploadId, copySource, callerObjectId, contentType,
+            response = dispatchPut(bucket, key, partNumber, uploadId, copySource, callerObjectId, contentType,
                     contentMd5, cannedAcl, bypassGovernanceRetention, contentEncoding, payloadHash, body, request);
         } finally {
+            // A claimed body the handler did not finish is drained by closing it.
             RequestBodies.closeQuietly(body);
         }
+        if (!body.claimed() && RequestBodies.hasBody(request)) {
+            if (RequestBodies.awaitingContinue(request)) {
+                // Never asked the client for the body, so after this final
+                // status it will not send one; close rather than wait for it.
+                if (response instanceof MutableHttpResponse<?> mutable) {
+                    mutable.header(HttpHeaders.CONNECTION, "close");
+                }
+            } else {
+                RequestBodies.discard(request);
+            }
+        }
+        return response;
     }
 
     private HttpResponse<String> dispatchPut(

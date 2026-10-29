@@ -23,6 +23,7 @@ import software.amazon.awssdk.services.s3.model.ListPartsResponse;
 import software.amazon.awssdk.services.s3.model.MultipartUpload;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.NoSuchUploadException;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.UploadPartResponse;
 
 import java.util.Arrays;
@@ -70,11 +71,17 @@ final class MultipartConformanceTest extends ConformanceBase {
     void malformedUploadIdsAreRejectedAsNoSuchUpload() {
         final byte[] data = makeBytes(PART_SIZE, (byte) 0x01);
         for (final String bad : List.of("../../etc/passwd", "/etc/passwd", "..", "not-a-ulid", "x")) {
+            // UploadPart is sent with Expect: 100-continue and the server rejects
+            // it before asking for the body, as S3 does. The JDK's HttpURLConnection
+            // (the SDK client used here) keeps the status but drops the error body
+            // in that case, so only the status can be asserted for this call.
             assertThatThrownBy(() -> s3.uploadPart(
                     r -> r.bucket(bucket).key(KEY).uploadId(bad).partNumber(1),
                     RequestBody.fromBytes(data)))
                     .as("UploadPart with %s", bad)
-                    .isInstanceOf(NoSuchUploadException.class);
+                    .isInstanceOf(S3Exception.class)
+                    .extracting(ex -> ((S3Exception) ex).statusCode())
+                    .isEqualTo(404);
             assertThatThrownBy(() -> s3.listParts(r -> r.bucket(bucket).key(KEY).uploadId(bad)))
                     .as("ListParts with %s", bad)
                     .isInstanceOf(NoSuchUploadException.class);

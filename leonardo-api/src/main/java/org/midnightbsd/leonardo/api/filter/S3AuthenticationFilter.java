@@ -85,13 +85,15 @@ public final class S3AuthenticationFilter implements HttpServerFilter {
                     .contentType(MediaType.APPLICATION_XML)
                     .body(ACCESS_DENIED_XML);
             if (hasBody(request)) {
-                // The body was never consumed. See RequestBodies: a client
-                // waiting for 100 Continue will not send it, so close; any
-                // other body is already in flight, so drain it instead.
-                if (RequestBodies.awaitingContinue(request)) {
-                    denied.header(HttpHeaders.CONNECTION, "close");
-                } else {
+                // The body was never consumed. See RequestBodies: a small body
+                // already in flight is drained so the connection stays usable;
+                // a client still waiting for 100 Continue will not send it, and
+                // a large or chunked one is not worth reading for an anonymous
+                // caller, so those get Connection: close.
+                if (RequestBodies.shouldDrain(request, RequestBodies.UNAUTHENTICATED_DRAIN_LIMIT)) {
                     RequestBodies.discard(request);
+                } else {
+                    denied.header(HttpHeaders.CONNECTION, "close");
                 }
             }
             return Publishers.just(denied);
@@ -112,8 +114,7 @@ public final class S3AuthenticationFilter implements HttpServerFilter {
     }
 
     static boolean hasBody(final HttpRequest<?> request) {
-        return request.getContentLength() > 0
-                || request.getHeaders().contains(HttpHeaders.TRANSFER_ENCODING);
+        return RequestBodies.hasBody(request);
     }
 
     private static Map<String, List<String>> lowercasedHeaders(final HttpRequest<?> request) {
