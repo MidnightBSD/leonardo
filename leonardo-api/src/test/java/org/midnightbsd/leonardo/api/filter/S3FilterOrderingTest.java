@@ -18,6 +18,7 @@ import io.micronaut.http.HttpStatus;
 import io.micronaut.http.MutableHttpResponse;
 import io.micronaut.http.filter.ServerFilterChain;
 import org.junit.jupiter.api.Test;
+import org.midnightbsd.leonardo.api.body.RequestBodies;
 import org.midnightbsd.leonardo.auth.RequestAuthenticator;
 
 import java.util.Optional;
@@ -41,9 +42,11 @@ final class S3FilterOrderingTest {
     }
 
     @Test
-    void rejectedRequestWithUnreadBodyClosesTheConnection() {
-        // The filter answers before the body is read. Left on a keep-alive
-        // connection, those bytes would be parsed as the next request.
+    void rejectedRequestWithUnreadBodyKeepsTheConnection() {
+        // The filter answers before the body is read. The unread bytes are
+        // drained server-side (RequestBodies.discard) rather than answered
+        // with Connection: close, which would reset the socket on the BSDs.
+        // StreamingUploadTest covers the live-connection behaviour.
         final S3AuthenticationFilter filter = new S3AuthenticationFilter(DENY_ALL);
         final HttpRequest<String> put = HttpRequest.PUT("/bucket/key", "xyz")
                 .header(HttpHeaders.CONTENT_LENGTH, "3");
@@ -51,7 +54,38 @@ final class S3FilterOrderingTest {
         final HttpResponse<?> denied = first(filter.doFilter(put, NEVER_REACHED));
 
         assertThat(denied.code()).isEqualTo(HttpStatus.FORBIDDEN.getCode());
+        assertThat(denied.getHeaders().contains(HttpHeaders.CONNECTION)).isFalse();
+    }
+
+    @Test
+    void rejectedRequestAwaitingContinueClosesTheConnection() {
+        // The client has not sent the body and will not after a final status,
+        // so there is nothing to drain and the server must not wait for it.
+        final S3AuthenticationFilter filter = new S3AuthenticationFilter(DENY_ALL);
+        final HttpRequest<String> put = HttpRequest.PUT("/bucket/key", "xyz")
+                .header(HttpHeaders.CONTENT_LENGTH, "3")
+                .header(HttpHeaders.EXPECT, "100-continue");
+
+        final HttpResponse<?> denied = first(filter.doFilter(put, NEVER_REACHED));
+
+        assertThat(denied.code()).isEqualTo(HttpStatus.FORBIDDEN.getCode());
         assertThat(denied.getHeaders().get(HttpHeaders.CONNECTION)).isEqualTo("close");
+    }
+
+    @Test
+    void rejectedRequestWithLargeOrChunkedBodyClosesTheConnection() {
+        // Draining is bounded for anonymous callers; anything above the limit
+        // or of unknown length is closed rather than read.
+        final S3AuthenticationFilter filter = new S3AuthenticationFilter(DENY_ALL);
+        final HttpRequest<String> large = HttpRequest.PUT("/bucket/key", "xyz")
+                .header(HttpHeaders.CONTENT_LENGTH, Long.toString(RequestBodies.UNAUTHENTICATED_DRAIN_LIMIT + 1));
+        final HttpRequest<String> chunked = HttpRequest.PUT("/bucket/key", "xyz")
+                .header(HttpHeaders.TRANSFER_ENCODING, "chunked");
+
+        assertThat(first(filter.doFilter(large, NEVER_REACHED)).getHeaders().get(HttpHeaders.CONNECTION))
+                .isEqualTo("close");
+        assertThat(first(filter.doFilter(chunked, NEVER_REACHED)).getHeaders().get(HttpHeaders.CONNECTION))
+                .isEqualTo("close");
     }
 
     @Test

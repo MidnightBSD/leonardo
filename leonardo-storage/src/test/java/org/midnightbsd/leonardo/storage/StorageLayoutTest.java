@@ -64,6 +64,39 @@ final class StorageLayoutTest {
     }
 
     @Test
+    void objectDataFileStaysUnderBucketDataDir() {
+        assertThat(layout.objectDataFile("photos", "01JABCDEF0123456789ABCDEFG"))
+                .isEqualTo(Paths.get("/var/leonardo/buckets/photos/data/01JABCDEF0123456789ABCDEFG"));
+    }
+
+    @Test
+    void multipartPathsStayUnderTheirDirectories() {
+        assertThat(layout.multipartUploadMetaFile("photos", "01JABCDEF0123456789ABCDEFG"))
+                .isEqualTo(Paths.get("/var/leonardo/buckets/photos/_meta/uploads/01JABCDEF0123456789ABCDEFG.yaml"));
+        assertThat(layout.multipartUploadPartsDir("01JABCDEF0123456789ABCDEFG"))
+                .isEqualTo(Paths.get("/var/leonardo/tmp/multipart/01JABCDEF0123456789ABCDEFG"));
+    }
+
+    @Test
+    void rejectsPathSegmentsThatCouldEscapeTheirDirectory() {
+        for (final String bad : new String[] {
+                "", "..", ".", ".hidden", "a/b", "a\\b", "../../etc/passwd",
+                "/etc/passwd", "a..b", "id\u0000", "id with space", "x".repeat(257)}) {
+            assertThatThrownBy(() -> layout.multipartUploadPartsDir(bad))
+                    .as("parts dir for %s", bad)
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> layout.multipartUploadMetaFile("photos", bad))
+                    .as("upload meta for %s", bad)
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> layout.objectDataFile("photos", bad))
+                    .as("object data for %s", bad)
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(() -> layout.objectDataFile("photos", null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void hashKeyIsStableAndHex() {
         final String h = StorageLayout.hashKey("hello");
         assertThat(h).hasSize(64).matches("^[0-9a-f]+$");

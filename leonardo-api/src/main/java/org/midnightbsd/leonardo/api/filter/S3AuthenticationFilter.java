@@ -21,6 +21,7 @@ import io.micronaut.http.MutableHttpResponse;
 import io.micronaut.http.annotation.Filter;
 import io.micronaut.http.filter.HttpServerFilter;
 import io.micronaut.http.filter.ServerFilterChain;
+import org.midnightbsd.leonardo.api.body.RequestBodies;
 import org.midnightbsd.leonardo.auth.RequestAuthenticator;
 import org.reactivestreams.Publisher;
 import org.slf4j.Logger;
@@ -84,10 +85,16 @@ public final class S3AuthenticationFilter implements HttpServerFilter {
                     .contentType(MediaType.APPLICATION_XML)
                     .body(ACCESS_DENIED_XML);
             if (hasBody(request)) {
-                // The body was never consumed. Left on a keep-alive connection
-                // it would be parsed as the start of the next request, so make
-                // the client reconnect, as S3 does.
-                denied.header(HttpHeaders.CONNECTION, "close");
+                // The body was never consumed. See RequestBodies: a small body
+                // already in flight is drained so the connection stays usable;
+                // a client still waiting for 100 Continue will not send it, and
+                // a large or chunked one is not worth reading for an anonymous
+                // caller, so those get Connection: close.
+                if (RequestBodies.shouldDrain(request, RequestBodies.UNAUTHENTICATED_DRAIN_LIMIT)) {
+                    RequestBodies.discard(request);
+                } else {
+                    denied.header(HttpHeaders.CONNECTION, "close");
+                }
             }
             return Publishers.just(denied);
         }
@@ -107,8 +114,7 @@ public final class S3AuthenticationFilter implements HttpServerFilter {
     }
 
     static boolean hasBody(final HttpRequest<?> request) {
-        return request.getContentLength() > 0
-                || request.getHeaders().contains(HttpHeaders.TRANSFER_ENCODING);
+        return RequestBodies.hasBody(request);
     }
 
     private static Map<String, List<String>> lowercasedHeaders(final HttpRequest<?> request) {

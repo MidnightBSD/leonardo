@@ -206,6 +206,52 @@ class StreamingUploadTest implements TestPropertyProvider {
     }
 
     @Test
+    void rejectedUploadPartLeavesTheConnectionUsable() {
+        // The handler answers NoSuchUpload before reading the body. The unread
+        // bytes must be drained rather than left on the keep-alive connection
+        // (next request hangs) or answered with Connection: close (TCP reset
+        // on the BSDs drops the response).
+        final byte[] data = new byte[256 * 1024];
+        Arrays.fill(data, (byte) 0x51);
+
+        for (int i = 0; i < 3; i++) {
+            assertThatThrownBy(() -> s3.uploadPart(
+                    r -> r.bucket(BUCKET).key("ghost").uploadId("01JABCDEF0123456789ABCDEFG").partNumber(1),
+                    RequestBody.fromBytes(data)))
+                    .isInstanceOf(S3Exception.class)
+                    .extracting(ex -> ((S3Exception) ex).statusCode())
+                    .isEqualTo(404);
+        }
+        s3.putObject(r -> r.bucket(BUCKET).key("after-rejection"), RequestBody.fromBytes(data));
+        assertThat(s3.headObject(r -> r.bucket(BUCKET).key("after-rejection")).contentLength())
+                .isEqualTo(data.length);
+    }
+
+    @Test
+    void deniedRequestWithBodyLeavesTheConnectionUsable() {
+        final byte[] data = new byte[256 * 1024];
+        Arrays.fill(data, (byte) 0x52);
+
+        try (S3Client wrongSecret = S3Client.builder()
+                .endpointOverride(URI.create("http://127.0.0.1:" + server.getPort()))
+                .credentialsProvider(StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create(ACCESS_KEY, "not-the-secret")))
+                .region(Region.US_EAST_1)
+                .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
+                .httpClientBuilder(UrlConnectionHttpClient.builder().socketTimeout(Duration.ofSeconds(20)))
+                .overrideConfiguration(c -> c.retryStrategy(b -> b.maxAttempts(1)))
+                .build()) {
+            for (int i = 0; i < 3; i++) {
+                assertThatThrownBy(() -> wrongSecret.putObject(
+                        r -> r.bucket(BUCKET).key("denied"), RequestBody.fromBytes(data)))
+                        .isInstanceOf(S3Exception.class)
+                        .extracting(ex -> ((S3Exception) ex).statusCode())
+                        .isEqualTo(403);
+            }
+        }
+    }
+
+    @Test
     void uploadPartStreamsBody() {
         final byte[] data = new byte[256 * 1024];
         Arrays.fill(data, (byte) 0x42);
