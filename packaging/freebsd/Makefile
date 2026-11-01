@@ -1,7 +1,7 @@
 # FreeBSD ports Makefile for Leonardo
 
 PORTNAME=	leonardo
-DISTVERSION=	0.1.1
+DISTVERSION=	0.1.2
 CATEGORIES=	net
 MASTER_SITES=	https://github.com/MidnightBSD/leonardo/releases/download/v${DISTVERSION}/
 EXTRACT_SUFX=	.tar
