@@ -129,6 +129,14 @@ final class ObjectControllerRangeTest {
     }
 
     @Test
+    void headerSafeDropsLineBreaksOnly() {
+        assertThat(ObjectController.headerSafe("attachment; filename=\"a.txt\"\r\nX-Injected: 1"))
+                .isEqualTo("attachment; filename=\"a.txt\"X-Injected: 1");
+        assertThat(ObjectController.headerSafe("plain")).isEqualTo("plain");
+        assertThat(ObjectController.headerSafe(null)).isNull();
+    }
+
+    @Test
     void parsesCopySourceWithOptionalVersionId() {
         ObjectController.CopySource src = ObjectController.parseCopySource("/src-bucket/dir/file%20name.txt");
         assertThat(src.bucket()).isEqualTo("src-bucket");
