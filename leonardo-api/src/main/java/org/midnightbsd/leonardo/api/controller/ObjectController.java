@@ -1080,7 +1080,7 @@ public final class ObjectController {
      * a clean header.
      */
     static String headerSafe(final String value) {
-        return value == null ? null : value.replaceAll("[\\r\\n]", "");
+        return value == null ? null : value.replace("\r", "").replace("\n", "");
     }
 
     /** Returns true if {@code responseEtag} equals any of the ETags in the header value. */
