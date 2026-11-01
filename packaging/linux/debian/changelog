@@ -1,3 +1,21 @@
+leonardo (0.1.2-1) unstable; urgency=medium
+
+  * Fix botocore compatibility: HeadObject without Accept header, SigV4
+    for percent-encoded keys, POST bodies without Content-Type.
+  * CompleteMultipartUpload honours bucket versioning, immutability and
+    retention and returns x-amz-version-id.
+  * Keep delete markers in version history; store x-amz-tagging and
+    Cache-Control, Content-Disposition, Content-Encoding,
+    Content-Language and Expires.
+  * Validate multipart upload and object IDs before they reach the
+    filesystem (path injection).
+  * Keep-alive fixes: drain unread request bodies, never send 100 Continue
+    for a rejected PutObject or UploadPart.
+  * Bump AssertJ to 3.27.7 (GHSA-rqfh-9r24-8c9r).
+  * Add tools/minio-to-leonardo.py migration script.
+
+ -- Lucas Holt <luke@foolishgames.com>  Sat, 31 Oct 2026 12:00:00 +0000
+
 leonardo (0.1.1-1) unstable; urgency=medium
 
   * Security dependency updates: Micronaut 4.10.22, Netty 4.2.19.Final,

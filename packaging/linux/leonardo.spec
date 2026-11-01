@@ -1,5 +1,5 @@
 Name: leonardo
-Version: 0.1.1
+Version: 0.1.2
 Release: 1%{?dist}
 Summary: S3-compatible object storage server
 License: Apache-2.0
@@ -69,6 +69,14 @@ chmod 0750 /var/lib/leonardo /var/log/leonardo
 %ghost %attr(0750,leonardo,leonardo) /var/log/leonardo
 
 %changelog
+* Sat Oct 31 2026 Lucas Holt <luke@foolishgames.com> - 0.1.2-1
+- Fix botocore compatibility: HeadObject without Accept, SigV4 for encoded keys, body-only POSTs
+- Honour versioning, immutability and retention on CompleteMultipartUpload
+- Keep delete markers in history, store x-amz-tagging and entity headers
+- Validate upload and object IDs before filesystem access (path injection)
+- Keep-alive fixes: drain unread bodies, no 100 Continue on rejected uploads
+- Bump AssertJ to 3.27.7 (GHSA-rqfh-9r24-8c9r)
+
 * Wed Oct 28 2026 Lucas Holt <luke@foolishgames.com> - 0.1.1-1
 - Security dependency updates: Micronaut 4.10.22, Netty 4.2.19.Final, Jackson 2.21.8, Logback 1.6.6
 
