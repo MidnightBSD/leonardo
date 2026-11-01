@@ -667,9 +667,13 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
      * parameters, sorted. Keys and values are percent-decoded before matching
      * and signing, which is how the SDKs build it and, more importantly, how
      * the server later reads them: matching raw keys would let a request smuggle
-     * {@code response%2Dcontent-type} past the signature. A signed parameter
-     * given more than once is ambiguous (signer and consumer could pick
-     * different copies), so the request is rejected by returning null.
+     * {@code response%2Dcontent-type} past the signature. Pairs are split on
+     * {@code ;} as well as {@code &} because Netty's query parser does, so a
+     * {@code ;response-content-disposition=...} hidden inside another value
+     * is seen here too. A signed parameter given more than once is ambiguous
+     * (signer and consumer could pick different copies), so the request is
+     * rejected by returning null. Values are percent-decoded, as botocore and
+     * the AWS SDKs sign them.
      *
      * @return the resource, or null when the query cannot be canonicalized safely
      */
@@ -681,7 +685,7 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
         final String rawQuery = uri.getRawQuery();
         if (rawQuery != null && !rawQuery.isEmpty()) {
             final Map<String, String> subResources = new TreeMap<>();
-            for (final String pair : rawQuery.split("&", -1)) {
+            for (final String pair : rawQuery.split("[&;]", -1)) {
                 final int eq = pair.indexOf('=');
                 final String key;
                 final String val;

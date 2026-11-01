@@ -161,6 +161,12 @@ final class RequestAuthenticatorFailureReasonTest {
                 .isEqualTo("/bucket/key?response-content-type=text/html");
         assertThat(authenticator.authenticate("GET", encodedKey, new HashMap<>())).isEmpty();
 
+        // Netty also splits on ';', so an override smuggled into another value is signed too
+        final URI semicolon = URI.create(plain + "&x=1;response-content-disposition=attachment");
+        assertThat(RequestAuthenticatorImpl.buildCanonicalizedResource(semicolon))
+                .isEqualTo("/bucket/key?response-content-disposition=attachment");
+        assertThat(authenticator.authenticate("GET", semicolon, new HashMap<>())).isEmpty();
+
         // a repeated signed parameter is ambiguous and never verifies, however it is signed
         final String resource = "/bucket/key?response-content-type=text/plain";
         final String sig = SigV2VerifierImpl.hmacSha1Base64(SECRET_KEY, "GET\n\n\n" + expires + "\n" + resource);
