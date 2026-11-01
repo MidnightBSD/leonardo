@@ -33,7 +33,7 @@ public final class AdminController {
         return HttpResponse.ok(Map.of(
                 "status", "UP",
                 "service", "leonardo",
-                "version", "0.1.2"
+                "version", "0.1.3"
         ));
     }
 }

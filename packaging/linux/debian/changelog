@@ -1,3 +1,27 @@
+leonardo (0.1.3-1) unstable; urgency=medium
+
+  * Fix CreateBucket and PutObject failing with fsync_on_write enabled
+    (ClosedChannelException after Jackson closed the stream).
+  * Hide keys whose latest version is a delete marker from ListObjects;
+    emit VersionId "null" for unversioned objects so clients can empty
+    buckets.
+  * DeleteObjects honours the per-entry VersionId instead of stacking
+    delete markers; DELETE ?versionId= echoes x-amz-version-id and
+    x-amz-delete-marker.
+  * Suspended versioning keeps the real versions and holds a single null
+    version; overwrites no longer leak the previous payload file.
+  * CopyObject: ?versionId= sources, x-amz-metadata-directive and
+    x-amz-tagging-directive REPLACE, self-copy requires REPLACE.
+  * UploadPartCopy honours x-amz-copy-source-range; CompleteMultipartUpload
+    validates parts (InvalidPart, EntityTooSmall) before touching the upload.
+  * Keys with a trailing slash, response-* header overrides, XML bodies on
+    412 and 416, NoSuchTagSet on untagged buckets.
+  * Authentication failures report InvalidAccessKeyId and
+    SignatureDoesNotMatch; SigV2 presigned URLs are accepted.
+  * Add tools/smoke-test.py and tools/smoke-test-mc.sh.
+
+ -- Lucas Holt <luke@foolishgames.com>  Sun, 01 Nov 2026 05:00:00 +0000
+
 leonardo (0.1.2-1) unstable; urgency=medium
 
   * Fix botocore compatibility: HeadObject without Accept header, SigV4

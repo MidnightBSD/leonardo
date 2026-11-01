@@ -1,5 +1,5 @@
 Name: leonardo
-Version: 0.1.2
+Version: 0.1.3
 Release: 1%{?dist}
 Summary: S3-compatible object storage server
 License: Apache-2.0
@@ -69,6 +69,18 @@ chmod 0750 /var/lib/leonardo /var/log/leonardo
 %ghost %attr(0750,leonardo,leonardo) /var/log/leonardo
 
 %changelog
+* Sun Nov 01 2026 Lucas Holt <luke@foolishgames.com> - 0.1.3-1
+- Fix CreateBucket/PutObject failing with fsync_on_write enabled (ClosedChannelException)
+- Hide delete-marker keys from ListObjects; emit VersionId null for unversioned objects
+- DeleteObjects honours per-entry VersionId; DELETE ?versionId= echoes version headers
+- Suspended versioning keeps real versions; stop leaking payloads on overwrite
+- CopyObject: ?versionId= sources, metadata/tagging REPLACE directives, self-copy rule
+- UploadPartCopy honours x-amz-copy-source-range; CompleteMultipartUpload validates
+  parts (InvalidPart, EntityTooSmall) before touching the upload
+- Trailing-slash keys, response-* header overrides, XML bodies on 412/416, NoSuchTagSet
+- Auth errors report InvalidAccessKeyId/SignatureDoesNotMatch; SigV2 presigned URLs
+- Add tools/smoke-test.py and tools/smoke-test-mc.sh
+
 * Sat Oct 31 2026 Lucas Holt <luke@foolishgames.com> - 0.1.2-1
 - Fix botocore compatibility: HeadObject without Accept, SigV4 for encoded keys, body-only POSTs
 - Honour versioning, immutability and retention on CompleteMultipartUpload
