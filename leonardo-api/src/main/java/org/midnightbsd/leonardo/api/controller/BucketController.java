@@ -15,6 +15,7 @@ import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.MediaType;
+import io.micronaut.http.MutableHttpResponse;
 import io.micronaut.http.annotation.Body;
 import io.micronaut.http.annotation.Consumes;
 import io.micronaut.http.annotation.Controller;
@@ -370,7 +371,11 @@ public final class BucketController {
         // ListObjectsV2 (list-type=2) or ListObjects v1
         final boolean isV2 = "2".equals(listType);
         try {
-            bucketService.headBucket(bucket);
+            final BucketMetadata bucketMeta = bucketService.getBucketMetadata(bucket);
+            // ListObjects (v1) always carries the owner; v2 only on fetch-owner=true.
+            final boolean includeOwner = !isV2
+                    || "true".equalsIgnoreCase(request.getParameters().getFirst("fetch-owner").orElse(""));
+            final String owner = includeOwner ? bucketMeta.owner() : null;
 
             final String startAfterKey;
             if (isV2) {
@@ -393,7 +398,7 @@ public final class BucketController {
 
             final List<S3Xml.ObjectEntry> entries = page.objects().stream()
                     .map(m -> new S3Xml.ObjectEntry(
-                            m.key(), m.lastModified(), m.etag(), m.size(), m.storageClass()))
+                            m.key(), m.lastModified(), m.etag(), m.size(), m.storageClass(), owner))
                     .toList();
             final List<S3Xml.CommonPrefixEntry> cpEntries = page.commonPrefixes().stream()
                     .map(S3Xml.CommonPrefixEntry::new)
@@ -445,13 +450,19 @@ public final class BucketController {
 
         try {
             final DeleteObjectsRequest deleteReq = DeleteObjectsRequest.parse(xmlBody);
-            final ObjectService.DeleteResult result =
-                    objectService.deleteObjects(bucket, deleteReq.keys());
+            final boolean bypass = "true".equalsIgnoreCase(
+                    request.getHeaders().get("x-amz-bypass-governance-retention"));
+            final ObjectService.DeleteResult result = objectService.deleteObjects(bucket,
+                    deleteReq.objects().stream()
+                            .map(o -> new ObjectService.DeleteRef(o.key(), o.versionId())).toList(),
+                    bypass);
 
             final List<S3Xml.DeletedEntry> deleted = result.deleted().stream()
-                    .map(S3Xml.DeletedEntry::new).toList();
+                    .map(d -> new S3Xml.DeletedEntry(d.key(), d.versionId(), d.deleteMarker(),
+                            d.deleteMarkerVersionId()))
+                    .toList();
             final List<S3Xml.DeleteErrorEntry> errors = result.errors().stream()
-                    .map(e -> new S3Xml.DeleteErrorEntry(e.key(), e.code(), e.message()))
+                    .map(e -> new S3Xml.DeleteErrorEntry(e.key(), e.versionId(), e.code(), e.message()))
                     .toList();
 
             if (deleteReq.quiet() && errors.isEmpty()) {
@@ -737,6 +748,9 @@ public final class BucketController {
     private HttpResponse<String> getBucketTagging(final String bucket) {
         try {
             final BucketMetadata meta = bucketService.getBucketMetadata(bucket);
+            if (meta.tags() == null || meta.tags().isEmpty()) {
+                return s3Error(S3Xml.error("NoSuchTagSet", "The TagSet does not exist", bucket), 404);
+            }
             return HttpResponse.ok(S3Xml.getBucketTagging(meta.tags()))
                     .contentType(MediaType.APPLICATION_XML);
         } catch (final S3Exception ex) {
@@ -1526,18 +1540,18 @@ public final class BucketController {
         return null;
     }
 
-    static <T> HttpResponse<T> s3Error(final S3Exception ex) {
+    static <T> MutableHttpResponse<T> s3Error(final S3Exception ex) {
         return s3Error(S3Xml.error(ex.getCode(), ex.getMessage(), null), ex.getHttpStatus());
     }
 
     @SuppressWarnings("unchecked")
-    static <T> HttpResponse<T> s3Error(final String xml, final int status) {
-        return (HttpResponse<T>) HttpResponse.status(HttpStatus.valueOf(status))
+    static <T> MutableHttpResponse<T> s3Error(final String xml, final int status) {
+        return (MutableHttpResponse<T>) HttpResponse.status(HttpStatus.valueOf(status))
                 .contentType(MediaType.APPLICATION_XML)
                 .body(xml);
     }
 
-    static <T> HttpResponse<T> internalError() {
+    static <T> MutableHttpResponse<T> internalError() {
         return s3Error(S3Xml.error("InternalError",
                 "We encountered an internal error. Please try again.", null), 500);
     }

@@ -198,7 +198,7 @@ public final class ObjectService {
             final String bucket, final String key, final String versionId) throws IOException {
         ensureBucketExists(bucket);
         final ObjectMetadata meta = metaStore.readVersion(bucket, key, versionId)
-                .orElseThrow(() -> S3Exception.noSuchKey(key));
+                .orElseThrow(() -> versionNotFound(bucket, key, versionId));
         if (isDeleteMarker(meta)) throw deleteMarkerNotAllowed();
         return new GetStreamResult(meta, payloadStore.open(bucket, meta.objectId()));
     }
@@ -220,7 +220,7 @@ public final class ObjectService {
             final String bucket, final String key, final String versionId) throws IOException {
         ensureBucketExists(bucket);
         final ObjectMetadata meta = metaStore.readVersion(bucket, key, versionId)
-                .orElseThrow(() -> S3Exception.noSuchKey(key));
+                .orElseThrow(() -> versionNotFound(bucket, key, versionId));
         if (isDeleteMarker(meta)) throw deleteMarkerNotAllowed();
         final byte[] data = payloadStore.read(bucket, meta.objectId());
         return new GetResult(meta, data);
@@ -246,7 +246,7 @@ public final class ObjectService {
             final String bucket, final String key, final String versionId) {
         ensureBucketExists(bucket);
         final ObjectMetadata meta = metaStore.readVersion(bucket, key, versionId)
-                .orElseThrow(() -> S3Exception.noSuchKey(key));
+                .orElseThrow(() -> versionNotFound(bucket, key, versionId));
         if (isDeleteMarker(meta)) throw deleteMarkerNotAllowed();
         return meta;
     }
@@ -279,15 +279,32 @@ public final class ObjectService {
         ensureBucketExists(bucket);
         final BucketMetadata bucketMeta = bucketStore.read(bucket)
                 .orElseThrow(() -> S3Exception.noSuchBucket(bucket));
-        final boolean versioningEnabled = bucketMeta.versioning() != null
-                && bucketMeta.versioning().status() == BucketMetadata.VersioningStatus.ENABLED;
+        final BucketMetadata.VersioningStatus status = ObjectPublisher.versioningStatus(bucketMeta);
 
         final var lock = locks.lockFor(bucket + "/" + key);
         lock.writeLock().lock();
         try {
             final var maybeOld = metaStore.read(bucket, key);
 
-            if (versioningEnabled) {
+            if (status == BucketMetadata.VersioningStatus.SUSPENDED) {
+                // A suspended bucket gets a null delete marker that replaces the
+                // null version (if any); real versions stay reachable by id.
+                if (maybeOld.isPresent() && maybeOld.get().versionId() == null) {
+                    checkWormDelete(maybeOld.get(), bypassGovernance);
+                }
+                final List<String> replaced = new ArrayList<>();
+                final List<ObjectMetadata.ObjectVersion> history = maybeOld
+                        .map(prev -> ObjectPublisher.historyForNullVersion(prev, replaced))
+                        .orElse(null);
+                final Instant now = Instant.now();
+                metaStore.write(bucket, new ObjectMetadata(
+                        key, "", 0, "", "", now, now, "STANDARD", history,
+                        null, null, "private", false, null, null, null, null, null));
+                publisher.deletePayloads(bucket, replaced, null);
+                return new DeleteObjectResult("null");
+            }
+
+            if (status == BucketMetadata.VersioningStatus.ENABLED) {
                 // Create a delete marker instead of physically deleting
                 final String markerVersionId = Ulid.generate();
                 final Instant now = Instant.now();
@@ -323,8 +340,11 @@ public final class ObjectService {
     /**
      * Permanently deletes a specific version (by version ID) from the version history.
      * This is the {@code ?versionId=} variant of DELETE. WORM constraints apply.
+     * The id {@code "null"} names the version written while versioning was off.
+     *
+     * @return {@code true} when the removed version was a delete marker
      */
-    public void deleteObjectVersion(
+    public boolean deleteObjectVersion(
             final String bucket, final String key,
             final String versionId, final boolean bypassGovernance) throws IOException {
         ensureBucketExists(bucket);
@@ -336,7 +356,7 @@ public final class ObjectService {
                     .orElseThrow(() -> S3Exception.noSuchKey(key));
 
             // Deleting the current version
-            if (versionId.equals(meta.versionId())) {
+            if (ObjectMetadataStore.sameVersionId(versionId, meta.versionId())) {
                 checkWormDelete(meta, bypassGovernance);
                 if (meta.versions() != null && !meta.versions().isEmpty()) {
                     // Promote the newest historical version to current
@@ -359,23 +379,25 @@ public final class ObjectService {
                 if (!isDeleteMarker(meta)) {
                     payloadStore.delete(bucket, meta.objectId());
                 }
-                return;
+                return isDeleteMarker(meta);
             }
 
             // Deleting a historical version
-            if (meta.versions() == null) throw S3Exception.noSuchKey(key);
+            if (meta.versions() == null) throw S3Exception.noSuchVersion(key, versionId);
             final List<ObjectMetadata.ObjectVersion> remaining = new ArrayList<>();
             boolean found = false;
+            boolean removedMarker = false;
             String deletedObjectId = null;
             for (final ObjectMetadata.ObjectVersion v : meta.versions()) {
-                if (!found && versionId.equals(v.versionId())) {
+                if (!found && ObjectMetadataStore.sameVersionId(versionId, v.versionId())) {
                     found = true;
+                    removedMarker = v.deleteMarker();
                     deletedObjectId = v.objectId();
                 } else {
                     remaining.add(v);
                 }
             }
-            if (!found) throw S3Exception.noSuchKey(key);
+            if (!found) throw S3Exception.noSuchVersion(key, versionId);
 
             final ObjectMetadata updated = new ObjectMetadata(
                     meta.key(), meta.objectId(), meta.size(), meta.contentType(),
@@ -389,6 +411,7 @@ public final class ObjectService {
             if (deletedObjectId != null && !deletedObjectId.isEmpty()) {
                 payloadStore.delete(bucket, deletedObjectId);
             }
+            return removedMarker;
         } finally {
             lock.writeLock().unlock();
         }
@@ -398,24 +421,52 @@ public final class ObjectService {
     // DeleteObjects (batch)
     // -------------------------------------------------------------------------
 
-    public record DeleteResult(List<String> deleted, List<DeleteError> errors) {}
+    /** One entry of a DeleteObjects request; {@code versionId} null means "the current version". */
+    public record DeleteRef(String key, String versionId) {}
 
-    public record DeleteError(String key, String code, String message) {}
+    /**
+     * One successfully processed DeleteObjects entry.
+     *
+     * @param versionId             the version removed when the request named one
+     * @param deleteMarker          a delete marker was created (no version id given) or removed
+     * @param deleteMarkerVersionId the id of a marker that was created
+     */
+    public record Deleted(String key, String versionId, boolean deleteMarker, String deleteMarkerVersionId) {}
 
-    /** Deletes multiple objects; returns per-key success/error info. */
+    public record DeleteResult(List<Deleted> deleted, List<DeleteError> errors) {}
+
+    public record DeleteError(String key, String versionId, String code, String message) {}
+
+    /** Deletes the current version of each key; see {@link #deleteObjects(String, List, boolean)}. */
+    public DeleteResult deleteObjects(final String bucket, final List<String> keys) throws IOException {
+        return deleteObjects(bucket, keys.stream().map(k -> new DeleteRef(k, null)).toList(), false);
+    }
+
+    /**
+     * DeleteObjects: each entry without a version id behaves like DeleteObject
+     * (a delete marker in a versioned bucket); each entry with one removes that
+     * version permanently, exactly like {@code DELETE ?versionId=}. Failures are
+     * reported per entry, never for the batch as a whole.
+     */
     public DeleteResult deleteObjects(
-            final String bucket, final List<String> keys) throws IOException {
+            final String bucket, final List<DeleteRef> refs, final boolean bypassGovernance)
+            throws IOException {
         ensureBucketExists(bucket);
-        final var deleted = new java.util.ArrayList<String>();
+        final var deleted = new java.util.ArrayList<Deleted>();
         final var errors = new java.util.ArrayList<DeleteError>();
-        for (final String key : keys) {
+        for (final DeleteRef ref : refs) {
             try {
-                deleteObject(bucket, key, false);
-                deleted.add(key);
+                if (ref.versionId() == null || ref.versionId().isEmpty()) {
+                    final DeleteObjectResult r = deleteObject(bucket, ref.key(), bypassGovernance);
+                    deleted.add(new Deleted(ref.key(), null, r.isDeleteMarker(), r.deleteMarkerVersionId()));
+                } else {
+                    final boolean wasMarker = deleteObjectVersion(bucket, ref.key(), ref.versionId(), bypassGovernance);
+                    deleted.add(new Deleted(ref.key(), ref.versionId(), wasMarker, null));
+                }
             } catch (final S3Exception ex) {
-                errors.add(new DeleteError(key, ex.getCode(), ex.getMessage()));
+                errors.add(new DeleteError(ref.key(), ref.versionId(), ex.getCode(), ex.getMessage()));
             } catch (final IOException ex) {
-                errors.add(new DeleteError(key, "InternalError", ex.getMessage()));
+                errors.add(new DeleteError(ref.key(), ref.versionId(), "InternalError", ex.getMessage()));
             }
         }
         return new DeleteResult(deleted, errors);
@@ -426,44 +477,155 @@ public final class ObjectService {
     // -------------------------------------------------------------------------
 
     /**
-     * Copies an object from {@code srcBucket/srcKey} to {@code dstBucket/dstKey}.
-     * Returns the ETag of the new object.
+     * Client-controlled attributes of a CopyObject request. With
+     * {@code replaceMetadata} false ({@code x-amz-metadata-directive: COPY}, the
+     * default) the content type, user metadata and entity headers travel with
+     * the bytes; with it true the values given here are used instead. Tags work
+     * the same way under {@code replaceTagging}.
+     */
+    public record CopyOptions(
+            boolean replaceMetadata,
+            String contentType,
+            Map<String, String> userMetadata,
+            ObjectMetadata.ContentHeaders contentHeaders,
+            boolean replaceTagging,
+            Map<String, String> tags) {
+
+        /** The default directives: copy everything from the source. */
+        public static CopyOptions copyAll() {
+            return new CopyOptions(false, null, null, null, false, null);
+        }
+    }
+
+    /** Result of CopyObject; {@code versionId} is null unless destination versioning is enabled. */
+    public record CopyResult(
+            String etag, long size, Instant lastModified, String versionId, String sourceVersionId) {}
+
+    /**
+     * Copies the current version of {@code srcBucket/srcKey} to
+     * {@code dstBucket/dstKey}, carrying metadata and tags along. Returns the
+     * ETag of the new object.
      */
     public String copyObject(
             final String srcBucket,
             final String srcKey,
             final String dstBucket,
             final String dstKey) throws IOException {
+        return copyObject(srcBucket, srcKey, null, dstBucket, dstKey, CopyOptions.copyAll()).etag();
+    }
+
+    /**
+     * Copies an object (optionally a specific version of it) to
+     * {@code dstBucket/dstKey}. The payload is streamed from one file to the
+     * other, so objects of any size can be copied, and the destination is
+     * published through the same path as PutObject so bucket versioning,
+     * immutability and retention apply.
+     *
+     * @param srcVersionId version to copy, or null/empty for the current one
+     * @throws S3Exception NoSuchKey when the source is missing or its current
+     *         version is a delete marker; InvalidRequest when a delete marker
+     *         is named by version id, or when an object is copied onto itself
+     *         without changing metadata or tags
+     */
+    public CopyResult copyObject(
+            final String srcBucket,
+            final String srcKey,
+            final String srcVersionId,
+            final String dstBucket,
+            final String dstKey,
+            final CopyOptions options) throws IOException {
 
         ensureBucketExists(srcBucket);
         ensureBucketExists(dstBucket);
 
-        final ObjectMetadata srcMeta = metaStore.read(srcBucket, srcKey)
-                .orElseThrow(() -> S3Exception.noSuchKey(srcKey));
-        final byte[] data = payloadStore.read(srcBucket, srcMeta.objectId());
-
-        // Generate a new object ID for the destination
-        final String dstObjectId = Ulid.generate();
-        final String etag = payloadStore.write(dstBucket, dstObjectId, data);
-        final Instant now = Instant.now();
-
-        final var lock = locks.lockFor(dstBucket + "/" + dstKey);
-        lock.writeLock().lock();
-        try {
-            // x-amz-metadata-directive and x-amz-tagging-directive default to
-            // COPY, so user metadata, entity headers and tags travel with the bytes.
-            final var dstMeta = new ObjectMetadata(
-                    dstKey, dstObjectId, srcMeta.size(),
-                    srcMeta.contentType(), "\"" + etag + "\"",
-                    now, now, "STANDARD",
-                    null, srcMeta.userMetadata(), srcMeta.tags(), "private", false, null,
-                    null, null, null, srcMeta.contentHeaders());
-            metaStore.write(dstBucket, dstMeta);
-        } finally {
-            lock.writeLock().unlock();
+        final boolean specificVersion = srcVersionId != null && !srcVersionId.isEmpty();
+        final ObjectMetadata srcMeta = (specificVersion
+                ? metaStore.readVersion(srcBucket, srcKey, srcVersionId)
+                : metaStore.read(srcBucket, srcKey))
+                .orElseThrow(() -> specificVersion
+                        ? versionNotFound(srcBucket, srcKey, srcVersionId)
+                        : S3Exception.noSuchKey(srcKey));
+        if (isDeleteMarker(srcMeta)) {
+            if (specificVersion) {
+                throw new S3Exception("InvalidRequest",
+                        "The source of a copy request may not specifically refer to a delete marker by version id.",
+                        400);
+            }
+            throw S3Exception.noSuchKey(srcKey);
         }
 
-        return etag;
+        final boolean sameObject = srcBucket.equals(dstBucket) && srcKey.equals(dstKey)
+                && (!specificVersion || ObjectMetadataStore.sameVersionId(srcVersionId, currentVersionId(srcBucket, srcKey)));
+        if (sameObject && !options.replaceMetadata() && !options.replaceTagging()) {
+            throw new S3Exception("InvalidRequest",
+                    "This copy request is illegal because it is trying to copy an object to itself "
+                    + "without changing the object's metadata, storage class, website redirect location "
+                    + "or encryption attributes.", 400);
+        }
+
+        // Stream the payload into a new object id; the destination record is
+        // published afterwards, and the new file is removed if that fails.
+        final String dstObjectId = Ulid.generate();
+        final ObjectPayloadStore.WriteResult stored;
+        try (InputStream in = payloadStore.open(srcBucket, srcMeta.objectId())) {
+            stored = payloadStore.write(dstBucket, dstObjectId, in);
+        }
+        final Instant now = Instant.now();
+
+        final String contentType = options.replaceMetadata()
+                && options.contentType() != null && !options.contentType().isEmpty()
+                ? options.contentType() : srcMeta.contentType();
+        final Map<String, String> userMetadata = options.replaceMetadata()
+                ? options.userMetadata() : srcMeta.userMetadata();
+        final ObjectMetadata.ContentHeaders contentHeaders = options.replaceMetadata()
+                ? options.contentHeaders() : srcMeta.contentHeaders();
+        final Map<String, String> tags = options.replaceTagging() ? options.tags() : srcMeta.tags();
+
+        final var draft = new ObjectMetadata(
+                dstKey, dstObjectId, stored.size(),
+                contentType != null ? contentType : "application/octet-stream",
+                "\"" + stored.etag() + "\"",
+                now, now, "STANDARD",
+                null,
+                userMetadata != null && !userMetadata.isEmpty() ? userMetadata : null,
+                tags != null && !tags.isEmpty() ? tags : null,
+                "private", false, null,
+                null, options.replaceMetadata() ? null : srcMeta.checksums(), null,
+                contentHeaders);
+        final String versionId;
+        try {
+            versionId = publisher.publish(dstBucket, draft);
+        } catch (final RuntimeException | IOException ex) {
+            try {
+                payloadStore.delete(dstBucket, dstObjectId);
+            } catch (final IOException ignored) {
+                // best effort: the record was never published
+            }
+            throw ex;
+        }
+        return new CopyResult(stored.etag(), stored.size(), now, versionId,
+                srcMeta.versionId() != null ? srcMeta.versionId() : (specificVersion ? "null" : null));
+    }
+
+    /**
+     * NoSuchVersion when the key exists but the version does not; NoSuchKey
+     * when the key itself is unknown. Package-visible through the public
+     * overload so MultipartService reports UploadPartCopy sources the same way.
+     */
+    public static S3Exception versionNotFound(final ObjectMetadataStore metaStore, final String bucket,
+                                              final String key, final String versionId) {
+        if (versionId != null && !versionId.isEmpty() && metaStore.read(bucket, key).isPresent()) {
+            return S3Exception.noSuchVersion(key, versionId);
+        }
+        return S3Exception.noSuchKey(key);
+    }
+
+    private S3Exception versionNotFound(final String bucket, final String key, final String versionId) {
+        return versionNotFound(metaStore, bucket, key, versionId);
+    }
+
+    private String currentVersionId(final String bucket, final String key) {
+        return metaStore.read(bucket, key).map(ObjectMetadata::versionId).orElse(null);
     }
 
     // -------------------------------------------------------------------------

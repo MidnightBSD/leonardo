@@ -48,4 +48,41 @@ public interface RequestAuthenticator {
             final String method, final URI uri, final Map<String, List<String>> headers) {
         return authenticate(method, uri, headers).map(identity -> new AuthenticationResult(identity, null));
     }
+
+    /** Why a request was rejected, in the shape of an S3 error response. */
+    record AuthFailure(String code, String message, int httpStatus) {
+        public static AuthFailure accessDenied() {
+            return new AuthFailure("AccessDenied", "Access Denied", 403);
+        }
+        public static AuthFailure invalidAccessKeyId() {
+            return new AuthFailure("InvalidAccessKeyId",
+                    "The AWS Access Key Id you provided does not exist in our records.", 403);
+        }
+        public static AuthFailure signatureDoesNotMatch() {
+            return new AuthFailure("SignatureDoesNotMatch",
+                    "The request signature we calculated does not match the signature you provided. "
+                    + "Check your key and signing method.", 403);
+        }
+        public static AuthFailure expired() {
+            return new AuthFailure("AccessDenied", "Request has expired", 403);
+        }
+    }
+
+    /** Either an authenticated identity or the S3 error that explains the rejection. */
+    record AuthOutcome(AuthenticationResult result, AuthFailure failure) {
+        public boolean authenticated() { return result != null; }
+    }
+
+    /**
+     * Authenticates a request and, on failure, says why with the S3 error code a
+     * real S3 endpoint would return ({@code InvalidAccessKeyId},
+     * {@code SignatureDoesNotMatch}, or {@code AccessDenied}). Implementations
+     * that cannot tell the reasons apart answer {@code AccessDenied}.
+     */
+    default AuthOutcome authenticateOrExplain(
+            final String method, final URI uri, final Map<String, List<String>> headers) {
+        return authenticateDetailed(method, uri, headers)
+                .map(result -> new AuthOutcome(result, null))
+                .orElseGet(() -> new AuthOutcome(null, AuthFailure.accessDenied()));
+    }
 }

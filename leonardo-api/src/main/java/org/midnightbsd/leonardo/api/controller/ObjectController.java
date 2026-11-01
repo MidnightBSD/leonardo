@@ -99,19 +99,22 @@ public final class ObjectController {
     @Head
     public HttpResponse<?> headObject(
             @PathVariable final String bucket,
-            @PathVariable final String key,
+            @PathVariable("key") final String rawKey,
             @QueryValue(value = "versionId", defaultValue = "") final String versionId,
             @Header(value = "if-none-match", defaultValue = "") final String ifNoneMatch,
             @Header(value = "if-match", defaultValue = "") final String ifMatch,
             @Header(value = "if-modified-since", defaultValue = "") final String ifModifiedSince,
-            @Header(value = "if-unmodified-since", defaultValue = "") final String ifUnmodifiedSince) {
+            @Header(value = "if-unmodified-since", defaultValue = "") final String ifUnmodifiedSince,
+            final HttpRequest<?> request) {
+        final String key = effectiveKey(rawKey, request);
         try {
             final ObjectMetadata meta = versionId.isEmpty()
                     ? objectService.headObject(bucket, key)
                     : objectService.headObjectVersion(bucket, key, versionId);
             final HttpResponse<?> conditional = checkConditionals(
                     meta, ifMatch, ifNoneMatch, ifModifiedSince, ifUnmodifiedSince);
-            if (conditional != null) return conditional;
+            // HEAD responses must have an empty body per HTTP spec
+            if (conditional != null) return HttpResponse.status(conditional.getStatus());
             final MutableHttpResponse<?> resp = objectHeaders(HttpResponse.ok(), meta);
             resp.contentType(meta.contentType());
             resp.header("Accept-Ranges", "bytes");
@@ -137,7 +140,7 @@ public final class ObjectController {
     @Produces(MediaType.ALL)
     public HttpResponse<?> getObject(
             @PathVariable final String bucket,
-            @PathVariable final String key,
+            @PathVariable("key") final String rawKey,
             @QueryValue(value = "uploadId", defaultValue = "") final String uploadId,
             @QueryValue(value = "versionId", defaultValue = "") final String versionId,
             @Header(value = "x-amz-object-attributes", defaultValue = "") final String objectAttributes,
@@ -150,6 +153,7 @@ public final class ObjectController {
             @Header(value = "if-unmodified-since", defaultValue = "") final String ifUnmodifiedSince,
             final HttpRequest<?> request) {
 
+        final String key = effectiveKey(rawKey, request);
         if (!uploadId.isEmpty()) {
             return handleListParts(bucket, key, uploadId, partNumberMarker, maxParts);
         }
@@ -205,10 +209,16 @@ public final class ObjectController {
                             "bytes " + start + "-" + end + "/" + meta.size());
                     response.header("Content-Length", String.valueOf(end - start + 1));
                     response.header("Accept-Ranges", "bytes");
+                    if (meta.versionId() != null) {
+                        response.header("x-amz-version-id", meta.versionId());
+                    }
+                    applyResponseOverrides(response, request);
                     return response;
                 }
                 // Invalid range → 416
-                return HttpResponse.<String>status(HttpStatus.valueOf(416))
+                result.data().close();
+                return BucketController.s3Error(S3Xml.error("InvalidRange",
+                        "The requested range is not satisfiable", key), 416)
                         .header("Content-Range", "bytes */" + meta.size());
             }
 
@@ -220,6 +230,7 @@ public final class ObjectController {
             if (meta.versionId() != null) {
                 response.header("x-amz-version-id", meta.versionId());
             }
+            applyResponseOverrides(response, request);
             return response;
         } catch (final S3Exception ex) {
             return BucketController.s3Error(ex);
@@ -279,7 +290,7 @@ public final class ObjectController {
     @Produces(MediaType.APPLICATION_XML)
     public HttpResponse<String> putObject(
             @PathVariable final String bucket,
-            @PathVariable final String key,
+            @PathVariable("key") final String rawKey,
             @QueryValue(value = "partNumber", defaultValue = "0") final int partNumber,
             @QueryValue(value = "uploadId", defaultValue = "") final String uploadId,
             @Header(value = "x-amz-copy-source", defaultValue = "") final String copySource,
@@ -292,6 +303,7 @@ public final class ObjectController {
             @Header(value = "content-encoding", defaultValue = "") final String contentEncoding,
             @Header(value = "x-amz-content-sha256", defaultValue = "") final String payloadHash,
             final HttpRequest<?> request) {
+        final String key = effectiveKey(rawKey, request);
         // The body is claimed only when a handler reads it (see LazyRequestBody):
         // CopyObject, UploadPartCopy and canned-ACL PutObjectAcl never do, and a
         // rejected PutObject/UploadPart must not be sent 100 Continue first.
@@ -351,7 +363,7 @@ public final class ObjectController {
         // UploadPart or UploadPartCopy
         if (!uploadId.isEmpty() && partNumber > 0) {
             if (!copySource.isEmpty()) {
-                return handleUploadPartCopy(bucket, key, uploadId, partNumber, copySource);
+                return handleUploadPartCopy(bucket, key, uploadId, partNumber, copySource, request);
             }
             return handleUploadPart(bucket, key, uploadId, partNumber, body,
                     contentEncoding, payloadHash,
@@ -361,7 +373,7 @@ public final class ObjectController {
 
         // CopyObject
         if (!copySource.isEmpty()) {
-            return handleCopyObject(bucket, key, copySource);
+            return handleCopyObject(bucket, key, copySource, request);
         }
 
         // PutObject — decode aws-chunked framing if present (AWS CLI v2 default)
@@ -464,24 +476,21 @@ public final class ObjectController {
             final String key,
             final String uploadId,
             final int partNumber,
-            final String rawSource) {
+            final String rawSource,
+            final HttpRequest<?> request) {
         try {
-            String decoded = URLDecoder.decode(rawSource, StandardCharsets.UTF_8);
-            if (decoded.startsWith("/")) decoded = decoded.substring(1);
-            final int slash = decoded.indexOf('/');
-            if (slash < 0) {
-                return BucketController.s3Error(
-                        S3Xml.error("InvalidArgument",
-                                "x-amz-copy-source must be of the form /bucket/key", null), 400);
-            }
-            final String srcBucket = decoded.substring(0, slash);
-            final String srcKey    = decoded.substring(slash + 1);
-
-            final String etag = multipartService.uploadPartCopy(
-                    bucket, key, uploadId, partNumber, srcBucket, srcKey, null, null);
-            return HttpResponse.ok(
-                    S3Xml.copyObjectResult("\"" + etag + "\"", java.time.Instant.now()))
+            final CopySource src = parseCopySource(rawSource);
+            final long[] range = parseCopySourceRange(request.getHeaders().get("x-amz-copy-source-range"));
+            final MultipartService.PartCopyResult result = multipartService.uploadPartCopy(
+                    bucket, key, uploadId, partNumber, src.bucket(), src.key(), src.versionId(),
+                    range == null ? null : range[0], range == null ? null : range[1]);
+            final MutableHttpResponse<String> resp = HttpResponse.ok(
+                    S3Xml.copyPartResult("\"" + result.etag() + "\"", java.time.Instant.now()))
                     .contentType(MediaType.APPLICATION_XML);
+            if (result.sourceVersionId() != null) {
+                resp.header("x-amz-copy-source-version-id", result.sourceVersionId());
+            }
+            return resp;
         } catch (final S3Exception ex) {
             return BucketController.s3Error(ex);
         } catch (final IOException ex) {
@@ -491,30 +500,107 @@ public final class ObjectController {
     }
 
     private HttpResponse<String> handleCopyObject(
-            final String dstBucket, final String dstKey, final String rawSource) {
-
-        String decoded = URLDecoder.decode(rawSource, StandardCharsets.UTF_8);
-        if (decoded.startsWith("/")) decoded = decoded.substring(1);
-        final int slash = decoded.indexOf('/');
-        if (slash < 0) {
-            return BucketController.s3Error(
-                    S3Xml.error("InvalidArgument",
-                            "x-amz-copy-source must be of the form /bucket/key", null), 400);
-        }
-        final String srcBucket = decoded.substring(0, slash);
-        final String srcKey = decoded.substring(slash + 1);
-
+            final String dstBucket, final String dstKey, final String rawSource,
+            final HttpRequest<?> request) {
         try {
-            final String etag = objectService.copyObject(srcBucket, srcKey, dstBucket, dstKey);
-            return HttpResponse.ok(S3Xml.copyObjectResult(
-                    "\"" + etag + "\"", java.time.Instant.now()))
+            final CopySource src = parseCopySource(rawSource);
+            final boolean replaceMetadata = isReplaceDirective(
+                    request.getHeaders().get("x-amz-metadata-directive"), "x-amz-metadata-directive");
+            final boolean replaceTagging = isReplaceDirective(
+                    request.getHeaders().get("x-amz-tagging-directive"), "x-amz-tagging-directive");
+            final ObjectService.CopyOptions options = new ObjectService.CopyOptions(
+                    replaceMetadata,
+                    request.getHeaders().get("content-type"),
+                    extractUserMetadata(request),
+                    contentHeadersOf(request),
+                    replaceTagging,
+                    replaceTagging ? parseTaggingHeader(request.getHeaders().get("x-amz-tagging")) : null);
+
+            final ObjectService.CopyResult result = objectService.copyObject(
+                    src.bucket(), src.key(), src.versionId(), dstBucket, dstKey, options);
+            final MutableHttpResponse<String> resp = HttpResponse.ok(S3Xml.copyObjectResult(
+                    "\"" + result.etag() + "\"", result.lastModified()))
                     .contentType(MediaType.APPLICATION_XML);
+            if (result.versionId() != null) {
+                resp.header("x-amz-version-id", result.versionId());
+            }
+            if (result.sourceVersionId() != null) {
+                resp.header("x-amz-copy-source-version-id", result.sourceVersionId());
+            }
+            return resp;
         } catch (final S3Exception ex) {
             return BucketController.s3Error(ex);
         } catch (final IOException ex) {
-            LOG.error("CopyObject '{}/{}'→'{}/{}' failed", srcBucket, srcKey, dstBucket, dstKey, ex);
+            LOG.error("CopyObject '{}'→'{}/{}' failed", rawSource, dstBucket, dstKey, ex);
             return BucketController.internalError();
         }
+    }
+
+    /** The parsed {@code x-amz-copy-source} header: {@code /bucket/key[?versionId=...]}. */
+    record CopySource(String bucket, String key, String versionId) {}
+
+    /**
+     * Parses {@code x-amz-copy-source}. The optional {@code ?versionId=} suffix
+     * is split off before the path is percent-decoded, as S3 documents it.
+     *
+     * @throws S3Exception InvalidArgument when the value is not {@code /bucket/key}
+     */
+    static CopySource parseCopySource(final String rawSource) {
+        String path = rawSource;
+        String versionId = null;
+        final int q = rawSource.indexOf('?');
+        if (q >= 0) {
+            path = rawSource.substring(0, q);
+            for (final String pair : rawSource.substring(q + 1).split("&")) {
+                if (pair.startsWith("versionId=")) {
+                    versionId = URLDecoder.decode(pair.substring("versionId=".length()), StandardCharsets.UTF_8);
+                }
+            }
+        }
+        String decoded = URLDecoder.decode(path, StandardCharsets.UTF_8);
+        if (decoded.startsWith("/")) decoded = decoded.substring(1);
+        final int slash = decoded.indexOf('/');
+        if (slash <= 0 || slash == decoded.length() - 1) {
+            throw new S3Exception(S3Exception.INVALID_ARGUMENT,
+                    "x-amz-copy-source must be of the form /bucket/key", 400);
+        }
+        return new CopySource(decoded.substring(0, slash), decoded.substring(slash + 1),
+                versionId == null || versionId.isEmpty() ? null : versionId);
+    }
+
+    /**
+     * Parses {@code x-amz-copy-source-range: bytes=first-last} (both inclusive,
+     * both required, as S3 specifies). Returns null when the header is absent.
+     *
+     * @throws S3Exception InvalidArgument for any other shape
+     */
+    static long[] parseCopySourceRange(final String header) {
+        if (header == null || header.isBlank()) return null;
+        final String value = header.trim();
+        if (value.startsWith("bytes=")) {
+            final String spec = value.substring("bytes=".length());
+            final int dash = spec.indexOf('-');
+            if (dash > 0 && dash < spec.length() - 1) {
+                try {
+                    final long first = Long.parseLong(spec.substring(0, dash).trim());
+                    final long last = Long.parseLong(spec.substring(dash + 1).trim());
+                    if (first >= 0 && last >= first) {
+                        return new long[]{first, last};
+                    }
+                } catch (final NumberFormatException ignored) {
+                    // fall through to the error below
+                }
+            }
+        }
+        throw new S3Exception(S3Exception.INVALID_ARGUMENT,
+                "The x-amz-copy-source-range value must be of the form bytes=first-last", 400);
+    }
+
+    private static boolean isReplaceDirective(final String value, final String header) {
+        if (value == null || value.isBlank() || "COPY".equalsIgnoreCase(value.trim())) return false;
+        if ("REPLACE".equalsIgnoreCase(value.trim())) return true;
+        throw new S3Exception(S3Exception.INVALID_ARGUMENT,
+                "Unknown " + header + " value: " + value + " (expected COPY or REPLACE)", 400);
     }
 
     // -------------------------------------------------------------------------
@@ -526,13 +612,14 @@ public final class ObjectController {
     @Produces(MediaType.APPLICATION_XML)
     public HttpResponse<String> postObject(
             @PathVariable final String bucket,
-            @PathVariable final String key,
+            @PathVariable("key") final String rawKey,
             @QueryValue(value = "uploadId", defaultValue = "") final String uploadId,
             @Header(value = "content-type", defaultValue = "") final String contentType,
             @Header(value = CALLER_OBJECT_ID_HEADER, defaultValue = "") final String callerObjectId,
             @Body final Optional<byte[]> body,
             final HttpRequest<?> request) {
 
+        final String key = effectiveKey(rawKey, request);
         final byte[] xmlBody = body.orElse(null);
         if (request.getParameters().contains("uploads")) {
             return handleCreateMultipartUpload(bucket, key, contentType, callerObjectId, request);
@@ -621,12 +708,13 @@ public final class ObjectController {
     @Produces(MediaType.APPLICATION_XML)
     public HttpResponse<String> deleteObject(
             @PathVariable final String bucket,
-            @PathVariable final String key,
+            @PathVariable("key") final String rawKey,
             @QueryValue(value = "uploadId", defaultValue = "") final String uploadId,
             @QueryValue(value = "versionId", defaultValue = "") final String versionId,
             @Header(value = "x-amz-bypass-governance-retention", defaultValue = "false")
                 final String bypassGovernanceHeader,
             final HttpRequest<?> request) {
+        final String key = effectiveKey(rawKey, request);
         if (!uploadId.isEmpty()) {
             return handleAbortMultipartUpload(bucket, key, uploadId);
         }
@@ -636,8 +724,14 @@ public final class ObjectController {
         final boolean bypass = "true".equalsIgnoreCase(bypassGovernanceHeader);
         try {
             if (!versionId.isEmpty()) {
-                objectService.deleteObjectVersion(bucket, key, versionId, bypass);
-                return HttpResponse.<String>status(HttpStatus.NO_CONTENT);
+                final boolean wasMarker = objectService.deleteObjectVersion(bucket, key, versionId, bypass);
+                final MutableHttpResponse<String> resp =
+                        HttpResponse.<String>status(HttpStatus.NO_CONTENT)
+                                .header("x-amz-version-id", versionId);
+                if (wasMarker) {
+                    resp.header("x-amz-delete-marker", "true");
+                }
+                return resp;
             }
             final ObjectService.DeleteObjectResult result =
                     objectService.deleteObject(bucket, key, bypass);
@@ -876,7 +970,7 @@ public final class ObjectController {
         // If-Match: fail with 412 if ETag doesn't match
         if (!ifMatch.isEmpty()) {
             if (!etagMatches(etag, ifMatch)) {
-                return HttpResponse.status(HttpStatus.PRECONDITION_FAILED);
+                return preconditionFailed();
             }
         }
 
@@ -885,7 +979,7 @@ public final class ObjectController {
         if (ifMatch.isEmpty() && !ifUnmodifiedSince.isEmpty()) {
             final Instant since = parseHttpDate(ifUnmodifiedSince);
             if (since != null && lastMod != null && lastMod.isAfter(since)) {
-                return HttpResponse.status(HttpStatus.PRECONDITION_FAILED);
+                return preconditionFailed();
             }
         }
 
@@ -905,6 +999,52 @@ public final class ObjectController {
         }
 
         return null;
+    }
+
+    private static HttpResponse<String> preconditionFailed() {
+        return BucketController.s3Error(S3Xml.error("PreconditionFailed",
+                "At least one of the pre-conditions you specified did not hold", null), 412);
+    }
+
+    /**
+     * Restores a trailing slash the router drops. Micronaut matches
+     * {@code /bucket/folder/} against {@code /{bucket}/{+key}} with
+     * {@code key=folder}, which would silently store the directory
+     * placeholder objects consoles and desktop clients create under the wrong
+     * key. The raw request path still carries the slash.
+     */
+    static String effectiveKey(final String key, final HttpRequest<?> request) {
+        if (request == null || key == null || key.endsWith("/")) return key;
+        final String path = request.getPath();
+        return path != null && path.endsWith("/") ? key + "/" : key;
+    }
+
+    private static final String[][] RESPONSE_OVERRIDES = {
+            {"response-content-type", "Content-Type"},
+            {"response-content-language", "Content-Language"},
+            {"response-expires", "Expires"},
+            {"response-cache-control", "Cache-Control"},
+            {"response-content-disposition", "Content-Disposition"},
+            {"response-content-encoding", "Content-Encoding"},
+    };
+
+    /**
+     * Applies the {@code response-*} query parameters of GetObject, which let a
+     * (typically presigned) download override the stored entity headers.
+     */
+    private static void applyResponseOverrides(
+            final MutableHttpResponse<?> response, final HttpRequest<?> request) {
+        for (final String[] mapping : RESPONSE_OVERRIDES) {
+            final String value = request.getParameters().getFirst(mapping[0]).orElse(null);
+            if (value == null || value.isEmpty()) continue;
+            if ("Content-Type".equals(mapping[1])) {
+                response.contentType(value);
+            } else {
+                // header() appends; the override must replace the stored value
+                response.getHeaders().remove(mapping[1]);
+                response.header(mapping[1], value);
+            }
+        }
     }
 
     /** Returns true if {@code responseEtag} equals any of the ETags in the header value. */

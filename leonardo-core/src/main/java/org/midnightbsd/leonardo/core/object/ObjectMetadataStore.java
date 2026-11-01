@@ -92,14 +92,14 @@ public final class ObjectMetadataStore {
         final ObjectMetadata meta = current.get();
 
         // Check if the request is for the current version
-        if (versionId == null || versionId.equals(meta.versionId())) {
+        if (versionId == null || sameVersionId(versionId, meta.versionId())) {
             return current;
         }
 
         // Search historical versions
         if (meta.versions() == null) return Optional.empty();
         for (final ObjectMetadata.ObjectVersion v : meta.versions()) {
-            if (versionId.equals(v.versionId())) {
+            if (sameVersionId(versionId, v.versionId())) {
                 final ObjectMetadata versioned = new ObjectMetadata(
                         meta.key(), v.objectId(), v.size(), meta.contentType(),
                         v.etag(), v.createdAt(), v.createdAt(), meta.storageClass(),
@@ -110,6 +110,18 @@ public final class ObjectMetadataStore {
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * Compares version ids the way S3 does: an object written while versioning
+     * was disabled or suspended has the version id {@code "null"}, which this
+     * server stores as a Java {@code null} on the current record and as the
+     * literal string in version history.
+     */
+    public static boolean sameVersionId(final String requested, final String actual) {
+        final String a = requested == null ? "null" : requested;
+        final String b = actual == null ? "null" : actual;
+        return a.equals(b);
     }
 
     /** Deletes the object metadata file. Silently succeeds if it doesn't exist. */
@@ -163,6 +175,13 @@ public final class ObjectMetadataStore {
 
         for (final ObjectMetadata meta : all) {
             final String key = meta.key();
+
+            // A key whose current version is a delete marker is not a live
+            // object: S3 hides it from ListObjects and never derives a common
+            // prefix from it. It stays visible through ListObjectVersions.
+            if (meta.isDeleteMarker()) {
+                continue;
+            }
 
             // Skip keys that are not past the start-after marker
             if (startAfterKey != null && !startAfterKey.isEmpty()
@@ -311,7 +330,7 @@ public final class ObjectMetadataStore {
                     // ListObjectVersions uses the key/version pair as one cursor.  Do not
                     // skip this key wholesale: later versions of the same key must remain
                     // reachable when a page ended in the middle of its version history.
-                    if (!versionIdMarker.equals(entry.versionId())) {
+                    if (!sameVersionId(versionIdMarker, entry.versionId())) {
                         continue;
                     }
                     resumeAfterMarker = false;

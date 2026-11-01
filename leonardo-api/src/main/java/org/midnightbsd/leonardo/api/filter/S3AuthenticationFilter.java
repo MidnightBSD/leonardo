@@ -23,6 +23,7 @@ import io.micronaut.http.filter.HttpServerFilter;
 import io.micronaut.http.filter.ServerFilterChain;
 import org.midnightbsd.leonardo.api.body.RequestBodies;
 import org.midnightbsd.leonardo.auth.RequestAuthenticator;
+import org.midnightbsd.leonardo.xml.S3Xml;
 import org.reactivestreams.Publisher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,11 +53,6 @@ public final class S3AuthenticationFilter implements HttpServerFilter {
 
     private static final Logger LOG = LoggerFactory.getLogger(S3AuthenticationFilter.class);
 
-    private static final String ACCESS_DENIED_XML =
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-            + "<Error><Code>AccessDenied</Code>"
-            + "<Message>Access Denied</Message></Error>";
-
     private final RequestAuthenticator authenticator;
 
     public S3AuthenticationFilter(final RequestAuthenticator authenticator) {
@@ -76,14 +72,17 @@ public final class S3AuthenticationFilter implements HttpServerFilter {
         }
 
         final Map<String, List<String>> headers = lowercasedHeaders(request);
-        final Optional<RequestAuthenticator.AuthenticationResult> authenticated = authenticator.authenticateDetailed(
+        final RequestAuthenticator.AuthOutcome outcome = authenticator.authenticateOrExplain(
                 request.getMethodName(), request.getUri(), headers);
 
-        if (authenticated.isEmpty()) {
-            LOG.debug("Auth rejected: {} {}", request.getMethodName(), path);
-            final MutableHttpResponse<String> denied = HttpResponse.status(HttpStatus.FORBIDDEN)
+        if (!outcome.authenticated()) {
+            final RequestAuthenticator.AuthFailure failure = outcome.failure() != null
+                    ? outcome.failure() : RequestAuthenticator.AuthFailure.accessDenied();
+            LOG.debug("Auth rejected ({}): {} {}", failure.code(), request.getMethodName(), path);
+            final MutableHttpResponse<String> denied = HttpResponse
+                    .status(HttpStatus.valueOf(failure.httpStatus()))
                     .contentType(MediaType.APPLICATION_XML)
-                    .body(ACCESS_DENIED_XML);
+                    .body(S3Xml.error(failure.code(), failure.message()));
             if (hasBody(request)) {
                 // The body was never consumed. See RequestBodies: a small body
                 // already in flight is drained so the connection stays usable;
@@ -99,7 +98,7 @@ public final class S3AuthenticationFilter implements HttpServerFilter {
             return Publishers.just(denied);
         }
 
-        final RequestAuthenticator.AuthenticationResult result = authenticated.get();
+        final RequestAuthenticator.AuthenticationResult result = outcome.result();
         LOG.debug("Auth passed: identity={} {} {}", result.identity(), request.getMethodName(), path);
         request.setAttribute("s3.identity", result.identity());
         if (result.streamingContext() != null) {

@@ -29,13 +29,21 @@ import java.util.List;
  * <Delete>
  *   <Quiet>false</Quiet>
  *   <Object><Key>key1</Key></Object>
- *   <Object><Key>key2</Key></Object>
+ *   <Object><Key>key2</Key><VersionId>01H...</VersionId></Object>
  * </Delete>
  * }</pre>
  *
  * <p>DocType declarations are disallowed to prevent XXE attacks.
  */
-public record DeleteObjectsRequest(boolean quiet, List<String> keys) {
+public record DeleteObjectsRequest(boolean quiet, List<ObjectRef> objects) {
+
+    /** One {@code <Object>} element; {@code versionId} is null when absent. */
+    public record ObjectRef(String key, String versionId) {}
+
+    /** The keys in request order, for callers that do not care about versions. */
+    public List<String> keys() {
+        return objects.stream().map(ObjectRef::key).toList();
+    }
 
     /**
      * Parses the request body.
@@ -64,7 +72,7 @@ public record DeleteObjectsRequest(boolean quiet, List<String> keys) {
             quiet = "true".equalsIgnoreCase(quietNodes.item(0).getTextContent().trim());
         }
 
-        final var keys = new ArrayList<String>();
+        final var objects = new ArrayList<ObjectRef>();
         final NodeList objectNodes = root.getElementsByTagName("Object");
         for (int i = 0; i < objectNodes.getLength(); i++) {
             final var obj = (Element) objectNodes.item(i);
@@ -72,11 +80,17 @@ public record DeleteObjectsRequest(boolean quiet, List<String> keys) {
             if (keyNodes.getLength() > 0) {
                 final String key = keyNodes.item(0).getTextContent();
                 if (key != null && !key.isEmpty()) {
-                    keys.add(key);
+                    final NodeList versionNodes = obj.getElementsByTagName("VersionId");
+                    String versionId = null;
+                    if (versionNodes.getLength() > 0) {
+                        final String v = versionNodes.item(0).getTextContent();
+                        versionId = v == null || v.isBlank() ? null : v.trim();
+                    }
+                    objects.add(new ObjectRef(key, versionId));
                 }
             }
         }
 
-        return new DeleteObjectsRequest(quiet, List.copyOf(keys));
+        return new DeleteObjectsRequest(quiet, List.copyOf(objects));
     }
 }

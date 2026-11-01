@@ -11,6 +11,7 @@
  */
 package org.midnightbsd.leonardo.api.controller;
 
+import io.micronaut.http.HttpRequest;
 import org.junit.jupiter.api.Test;
 import org.midnightbsd.leonardo.core.object.ObjectMetadata;
 import org.midnightbsd.leonardo.core.object.ObjectService;
@@ -92,7 +93,39 @@ final class ObjectControllerRangeTest {
         when(service.headObject("bucket", "key")).thenReturn(meta);
         final ObjectController controller = new ObjectController(service, mock(MultipartService.class));
 
-        assertThat(controller.headObject("bucket", "key", "", "\"etag\"", "", "", "")
-                .getStatus().getCode()).isEqualTo(304);
+        assertThat(controller.headObject("bucket", "key", "", "\"etag\"", "", "", "",
+                HttpRequest.HEAD("/bucket/key")).getStatus().getCode()).isEqualTo(304);
+    }
+
+    @Test
+    void effectiveKeyRestoresTrailingSlashDroppedByRouting() {
+        // Micronaut's /{bucket}/{+key} route hands "folder" to the controller for
+        // both /bucket/folder and /bucket/folder/; the raw path tells them apart.
+        assertThat(ObjectController.effectiveKey("folder", HttpRequest.PUT("/bucket/folder/", "")))
+                .isEqualTo("folder/");
+        assertThat(ObjectController.effectiveKey("folder", HttpRequest.PUT("/bucket/folder", "")))
+                .isEqualTo("folder");
+        assertThat(ObjectController.effectiveKey("a/b/", HttpRequest.PUT("/bucket/a/b/", "")))
+                .isEqualTo("a/b/");
+    }
+
+    @Test
+    void parsesCopySourceWithOptionalVersionId() {
+        ObjectController.CopySource src = ObjectController.parseCopySource("/src-bucket/dir/file%20name.txt");
+        assertThat(src.bucket()).isEqualTo("src-bucket");
+        assertThat(src.key()).isEqualTo("dir/file name.txt");
+        assertThat(src.versionId()).isNull();
+
+        src = ObjectController.parseCopySource("src-bucket/key?versionId=01HXYZ");
+        assertThat(src.bucket()).isEqualTo("src-bucket");
+        assertThat(src.key()).isEqualTo("key");
+        assertThat(src.versionId()).isEqualTo("01HXYZ");
+    }
+
+    @Test
+    void parsesCopySourceRange() {
+        assertThat(ObjectController.parseCopySourceRange("bytes=0-99")).containsExactly(0L, 99L);
+        assertThat(ObjectController.parseCopySourceRange(null)).isNull();
+        assertThat(ObjectController.parseCopySourceRange("")).isNull();
     }
 }

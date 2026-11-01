@@ -73,7 +73,12 @@ public final class S3Xml {
     // -------------------------------------------------------------------------
 
     public record ObjectEntry(String key, Instant lastModified, String etag, long size,
-                              String storageClass) {}
+                              String storageClass, String owner) {
+        public ObjectEntry(final String key, final Instant lastModified, final String etag,
+                           final long size, final String storageClass) {
+            this(key, lastModified, etag, size, storageClass, null);
+        }
+    }
 
     public record CommonPrefixEntry(String prefix) {}
 
@@ -149,9 +154,23 @@ public final class S3Xml {
     // DeleteObjects result
     // -------------------------------------------------------------------------
 
-    public record DeletedEntry(String key) {}
+    /**
+     * @param versionId             the version that was removed, when the request named one
+     * @param deleteMarker          true when a delete marker was created or removed
+     * @param deleteMarkerVersionId the id of the marker that was created
+     */
+    public record DeletedEntry(String key, String versionId, boolean deleteMarker,
+                               String deleteMarkerVersionId) {
+        public DeletedEntry(final String key) {
+            this(key, null, false, null);
+        }
+    }
 
-    public record DeleteErrorEntry(String key, String code, String message) {}
+    public record DeleteErrorEntry(String key, String versionId, String code, String message) {
+        public DeleteErrorEntry(final String key, final String code, final String message) {
+            this(key, null, code, message);
+        }
+    }
 
     public static String deleteResult(
             final List<DeletedEntry> deleted,
@@ -160,11 +179,20 @@ public final class S3Xml {
         final var sb = new StringBuilder(PREAMBLE);
         sb.append("<DeleteResult").append(NS).append(">");
         for (final var d : deleted) {
-            sb.append("<Deleted>").append(t("Key", d.key())).append("</Deleted>");
+            sb.append("<Deleted>").append(t("Key", d.key()));
+            if (d.versionId() != null) sb.append(t("VersionId", d.versionId()));
+            if (d.deleteMarker()) {
+                sb.append(t("DeleteMarker", "true"));
+                if (d.deleteMarkerVersionId() != null) {
+                    sb.append(t("DeleteMarkerVersionId", d.deleteMarkerVersionId()));
+                }
+            }
+            sb.append("</Deleted>");
         }
         for (final var e : errors) {
-            sb.append("<Error>").append(t("Key", e.key())).append(t("Code", e.code()))
-                    .append(t("Message", e.message())).append("</Error>");
+            sb.append("<Error>").append(t("Key", e.key()));
+            if (e.versionId() != null) sb.append(t("VersionId", e.versionId()));
+            sb.append(t("Code", e.code())).append(t("Message", e.message())).append("</Error>");
         }
         sb.append("</DeleteResult>");
         return sb.toString();
@@ -190,6 +218,14 @@ public final class S3Xml {
                 + t("ETag", etag)
                 + t("LastModified", ISO.format(lastModified))
                 + "</CopyObjectResult>";
+    }
+
+    /** Response body for UploadPartCopy. */
+    public static String copyPartResult(final String etag, final Instant lastModified) {
+        return PREAMBLE + "<CopyPartResult" + NS + ">"
+                + t("ETag", etag)
+                + t("LastModified", ISO.format(lastModified))
+                + "</CopyPartResult>";
     }
 
     // -------------------------------------------------------------------------
@@ -566,15 +602,18 @@ public final class S3Xml {
         sb.append(t("MaxKeys",        String.valueOf(maxKeys)));
         sb.append(t("IsTruncated",    String.valueOf(truncated)));
         if (delimiter != null && !delimiter.isEmpty()) sb.append(t("Delimiter", delimiter));
-        if (truncated) {
-            if (nextKeyMarker       != null) sb.append(t("NextKeyMarker",       nextKeyMarker));
-            if (nextVersionIdMarker != null) sb.append(t("NextVersionIdMarker", nextVersionIdMarker));
+        if (truncated && nextKeyMarker != null) {
+            sb.append(t("NextKeyMarker", nextKeyMarker));
+            sb.append(t("NextVersionIdMarker", nextVersionIdMarker != null ? nextVersionIdMarker : "null"));
         }
         for (final VersionListEntry v : versions) {
             final String tag = v.deleteMarker() ? "DeleteMarker" : "Version";
             sb.append("<").append(tag).append(">");
             sb.append(t("Key", v.key()));
-            if (v.versionId() != null) sb.append(t("VersionId", v.versionId()));
+            // Objects written without versioning carry the literal id "null".
+            // Omitting the element breaks clients (boto3 raises KeyError, mc
+            // skips the entry) and makes such buckets impossible to empty.
+            sb.append(t("VersionId", v.versionId() != null ? v.versionId() : "null"));
             sb.append(t("IsLatest",     String.valueOf(v.isLatest())));
             sb.append(t("LastModified", ISO.format(v.lastModified())));
             if (!v.deleteMarker()) {
@@ -811,8 +850,12 @@ public final class S3Xml {
                     .append(t("LastModified", ISO.format(o.lastModified())))
                     .append(t("ETag", o.etag()))
                     .append(t("Size", String.valueOf(o.size())))
-                    .append(t("StorageClass", o.storageClass() != null ? o.storageClass() : "STANDARD"))
-                    .append("</Contents>");
+                    .append(t("StorageClass", o.storageClass() != null ? o.storageClass() : "STANDARD"));
+            if (o.owner() != null) {
+                sb.append("<Owner>").append(t("ID", o.owner()))
+                        .append(t("DisplayName", o.owner())).append("</Owner>");
+            }
+            sb.append("</Contents>");
         }
     }
 

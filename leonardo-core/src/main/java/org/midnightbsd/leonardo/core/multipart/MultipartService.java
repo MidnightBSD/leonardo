@@ -11,6 +11,7 @@
  */
 package org.midnightbsd.leonardo.core.multipart;
 
+import io.micronaut.context.annotation.Value;
 import jakarta.inject.Singleton;
 import org.midnightbsd.leonardo.core.S3Exception;
 import org.midnightbsd.leonardo.core.Ulid;
@@ -18,6 +19,8 @@ import org.midnightbsd.leonardo.core.bucket.BucketMetadataStore;
 import org.midnightbsd.leonardo.core.object.ObjectMetadata;
 import org.midnightbsd.leonardo.core.object.ObjectMetadataStore;
 import org.midnightbsd.leonardo.core.object.ObjectPublisher;
+import org.midnightbsd.leonardo.core.object.ObjectService;
+import org.midnightbsd.leonardo.storage.BoundedInputStream;
 import org.midnightbsd.leonardo.storage.ObjectPayloadStore;
 import org.midnightbsd.leonardo.storage.PartStore;
 import org.midnightbsd.leonardo.storage.lock.StripedLockManager;
@@ -58,6 +61,7 @@ public final class MultipartService {
     private final BucketMetadataStore bucketStore;
     private final ObjectPublisher publisher;
     private final StripedLockManager locks;
+    private final long minPartSize;
 
     public MultipartService(
             final MultipartUploadStore uploadStore,
@@ -65,7 +69,8 @@ public final class MultipartService {
             final ObjectPayloadStore payloadStore,
             final ObjectMetadataStore metaStore,
             final BucketMetadataStore bucketStore,
-            final ObjectPublisher publisher) {
+            final ObjectPublisher publisher,
+            @Value("${leonardo.limits.min_part_size:5242880}") final long minPartSize) {
         this.uploadStore  = uploadStore;
         this.partStore    = partStore;
         this.payloadStore = payloadStore;
@@ -73,6 +78,7 @@ public final class MultipartService {
         this.bucketStore  = bucketStore;
         this.publisher    = publisher;
         this.locks        = publisher.locks();
+        this.minPartSize  = minPartSize;
     }
 
     // -------------------------------------------------------------------------
@@ -185,25 +191,68 @@ public final class MultipartService {
             final String srcKey,
             final Long rangeStart,
             final Long rangeEnd) throws IOException {
+        return uploadPartCopy(bucket, key, uploadId, partNumber, srcBucket, srcKey, null,
+                rangeStart, rangeEnd).etag();
+    }
+
+    /** Result of UploadPartCopy. */
+    public record PartCopyResult(String etag, long size, String sourceVersionId) {}
+
+    /**
+     * Streams a byte range (or the whole object) of {@code srcBucket/srcKey},
+     * optionally a specific version of it, into a part of the given upload.
+     *
+     * @throws S3Exception InvalidArgument when the range does not fit the source
+     */
+    public PartCopyResult uploadPartCopy(
+            final String bucket,
+            final String key,
+            final String uploadId,
+            final int partNumber,
+            final String srcBucket,
+            final String srcKey,
+            final String srcVersionId,
+            final Long rangeStart,
+            final Long rangeEnd) throws IOException {
         validatePartNumber(partNumber);
         ensureBucketExists(srcBucket);
         final MultipartUpload upload = requireUpload(bucket, uploadId);
         validateUploadKey(upload, key);
 
-        final ObjectMetadata srcMeta = metaStore.read(srcBucket, srcKey)
-                .orElseThrow(() -> S3Exception.noSuchKey(srcKey));
-        byte[] srcData = payloadStore.read(srcBucket, srcMeta.objectId());
-
-        if (rangeStart != null && rangeEnd != null) {
-            final int start = (int) Math.min(rangeStart, srcData.length);
-            final int end   = (int) Math.min(rangeEnd + 1, srcData.length);
-            srcData = java.util.Arrays.copyOfRange(srcData, start, end);
+        final boolean specificVersion = srcVersionId != null && !srcVersionId.isEmpty();
+        final ObjectMetadata srcMeta = (specificVersion
+                ? metaStore.readVersion(srcBucket, srcKey, srcVersionId)
+                : metaStore.read(srcBucket, srcKey))
+                .orElseThrow(() -> ObjectService.versionNotFound(metaStore, srcBucket, srcKey, srcVersionId));
+        if (srcMeta.isDeleteMarker()) {
+            throw S3Exception.noSuchKey(srcKey);
         }
 
-        final String etag = partStore.write(uploadId, partNumber, srcData);
+        final long size = srcMeta.size();
+        long start = 0;
+        long end = size - 1;
+        if (rangeStart != null || rangeEnd != null) {
+            // S3 rejects any range that does not lie entirely inside the source,
+            // including an end past the last byte; it never clamps.
+            if (rangeStart == null || rangeEnd == null || rangeStart < 0 || rangeEnd < rangeStart
+                    || rangeEnd >= size) {
+                throw new S3Exception(S3Exception.INVALID_ARGUMENT,
+                        "Range specified is not valid for source object of size: " + size, 400);
+            }
+            start = rangeStart;
+            end = rangeEnd;
+        }
+
+        final ObjectPayloadStore.WriteResult stored;
+        try (InputStream in = payloadStore.open(srcBucket, srcMeta.objectId())) {
+            in.skipNBytes(start);
+            stored = partStore.write(uploadId, partNumber,
+                    new BoundedInputStream(in, size == 0 ? 0 : end - start + 1));
+        }
         updateUploadWithPart(bucket, uploadId, new MultipartUpload.PartInfo(
-                partNumber, etag, srcData.length, Instant.now()));
-        return etag;
+                partNumber, stored.etag(), stored.size(), Instant.now()));
+        return new PartCopyResult(stored.etag(), stored.size(),
+                srcMeta.versionId() != null ? srcMeta.versionId() : (specificVersion ? "null" : null));
     }
 
     // -------------------------------------------------------------------------
@@ -224,9 +273,12 @@ public final class MultipartService {
      * Validates the provided parts list, assembles the final object payload by
      * streaming part files, writes object metadata, and cleans up upload state.
      *
-     * <p>The upload YAML is deleted first (under the upload lock) so that
-     * concurrent {@code CompleteMultipartUpload} calls for the same uploadId
-     * receive {@code NoSuchUpload}.
+     * <p>Every validation runs under the upload lock before the upload YAML is
+     * deleted, so a rejected request (unknown part, ETag mismatch, undersized
+     * part) leaves the upload intact and the client can fix the request, retry
+     * or abort. Once the parts check out the YAML is deleted while still
+     * holding the lock, so a concurrent {@code CompleteMultipartUpload} for
+     * the same uploadId receives {@code NoSuchUpload}.
      */
     public CompleteResult completeMultipartUpload(
             final String bucket,
@@ -234,56 +286,43 @@ public final class MultipartService {
             final String uploadId,
             final List<PartRef> clientParts) throws IOException {
 
-        // Step 1: claim the upload by deleting its YAML atomically
         final MultipartUpload upload;
+        final List<PartRef> ordered;
+        final var partPaths = new ArrayList<java.nio.file.Path>();
+        final var partEtags = new ArrayList<String>();
         final var uploadLock = locks.lockFor("mp:" + uploadId);
         uploadLock.writeLock().lock();
         try {
             upload = requireUpload(bucket, uploadId);
             validateUploadKey(upload, key);
+            ordered = orderedParts(clientParts);
+
+            final Map<Integer, MultipartUpload.PartInfo> stored = new java.util.HashMap<>();
+            if (upload.parts() != null) {
+                upload.parts().forEach(pi -> stored.put(pi.partNumber(), pi));
+            }
+            for (int i = 0; i < ordered.size(); i++) {
+                final PartRef part = ordered.get(i);
+                final MultipartUpload.PartInfo info = stored.get(part.partNumber());
+                final java.nio.file.Path p = partStore.partPath(uploadId, part.partNumber());
+                if (info == null || !java.nio.file.Files.exists(p)
+                        || !etagMatches(part.etag(), info.etag())) {
+                    throw invalidPart(part.partNumber());
+                }
+                if (i < ordered.size() - 1 && info.size() < minPartSize) {
+                    throw new S3Exception("EntityTooSmall",
+                            "Your proposed upload is smaller than the minimum allowed object size. "
+                            + "Each part must be at least " + minPartSize
+                            + " bytes in size, except the last part.", 400);
+                }
+                partPaths.add(p);
+                partEtags.add(info.etag());
+            }
+
+            // Claim the upload: from here on it no longer exists for other callers.
             uploadStore.delete(bucket, uploadId);
         } finally {
             uploadLock.writeLock().unlock();
-        }
-
-        // Step 2: validate and order the client-provided part list
-        if (clientParts == null || clientParts.isEmpty()) {
-            throw new S3Exception(S3Exception.INVALID_ARGUMENT,
-                    "You must specify at least one part.", 400);
-        }
-        final List<PartRef> ordered = clientParts.stream()
-                .sorted(Comparator.comparingInt(PartRef::partNumber))
-                .toList();
-        final int first = ordered.get(0).partNumber();
-        final int last  = ordered.get(ordered.size() - 1).partNumber();
-        if (first < 1 || last > MAX_PART_NUMBER) {
-            throw new S3Exception(S3Exception.INVALID_ARGUMENT,
-                    "Part numbers must be between 1 and " + MAX_PART_NUMBER, 400);
-        }
-        for (int i = 1; i < ordered.size(); i++) {
-            if (ordered.get(i).partNumber() == ordered.get(i - 1).partNumber()) {
-                throw new S3Exception(S3Exception.INVALID_ARGUMENT,
-                        "Duplicate part number: " + ordered.get(i).partNumber(), 400);
-            }
-        }
-
-        // Resolve part paths and collect etags for multipart ETag computation
-        final var partPaths = new ArrayList<java.nio.file.Path>(ordered.size());
-        final var partEtags = new ArrayList<String>(ordered.size());
-        for (final var part : ordered) {
-            final java.nio.file.Path p = partStore.partPath(uploadId, part.partNumber());
-            if (!java.nio.file.Files.exists(p)) {
-                throw new S3Exception(S3Exception.INVALID_ARGUMENT,
-                        "Part " + part.partNumber() + " was not uploaded.", 400);
-            }
-            partPaths.add(p);
-            // Prefer stored etag from upload state; fall back to client-provided
-            final String storedEtag = upload.parts() == null ? null : upload.parts().stream()
-                    .filter(pi -> pi.partNumber() == part.partNumber())
-                    .map(MultipartUpload.PartInfo::etag)
-                    .findFirst()
-                    .orElse(null);
-            partEtags.add(storedEtag != null ? storedEtag : part.etag());
         }
 
         // Step 3: assemble payload
@@ -452,6 +491,51 @@ public final class MultipartService {
     /** Returns the upload state, or throws {@code NoSuchUpload} if not found. */
     public MultipartUpload getUpload(final String bucket, final String uploadId) {
         return requireUpload(bucket, uploadId);
+    }
+
+    /** Sorts the client's part list and rejects empty lists, bad numbers and duplicates. */
+    private static List<PartRef> orderedParts(final List<PartRef> clientParts) {
+        if (clientParts == null || clientParts.isEmpty()) {
+            throw new S3Exception(S3Exception.INVALID_ARGUMENT,
+                    "You must specify at least one part.", 400);
+        }
+        final List<PartRef> ordered = clientParts.stream()
+                .sorted(Comparator.comparingInt(PartRef::partNumber))
+                .toList();
+        final int first = ordered.get(0).partNumber();
+        final int last  = ordered.get(ordered.size() - 1).partNumber();
+        if (first < 1 || last > MAX_PART_NUMBER) {
+            throw new S3Exception(S3Exception.INVALID_ARGUMENT,
+                    "Part numbers must be between 1 and " + MAX_PART_NUMBER, 400);
+        }
+        for (int i = 1; i < ordered.size(); i++) {
+            if (ordered.get(i).partNumber() == ordered.get(i - 1).partNumber()) {
+                throw new S3Exception(S3Exception.INVALID_ARGUMENT,
+                        "Duplicate part number: " + ordered.get(i).partNumber(), 400);
+            }
+        }
+        return ordered;
+    }
+
+    /** Compares a client-supplied part ETag (quotes optional) with the stored MD5 hex. */
+    static boolean etagMatches(final String clientEtag, final String storedEtag) {
+        if (clientEtag == null || storedEtag == null) return false;
+        String c = clientEtag.trim();
+        if (c.length() >= 2 && c.startsWith("\"") && c.endsWith("\"")) {
+            c = c.substring(1, c.length() - 1);
+        }
+        String s = storedEtag.trim();
+        if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+            s = s.substring(1, s.length() - 1);
+        }
+        return !c.isEmpty() && c.equalsIgnoreCase(s);
+    }
+
+    private static S3Exception invalidPart(final int partNumber) {
+        return new S3Exception("InvalidPart",
+                "One or more of the specified parts could not be found. The part may not have "
+                + "been uploaded, or the specified entity tag may not match the part's entity tag. "
+                + "(part " + partNumber + ")", 400);
     }
 
     private void ensureBucketExists(final String bucket) {

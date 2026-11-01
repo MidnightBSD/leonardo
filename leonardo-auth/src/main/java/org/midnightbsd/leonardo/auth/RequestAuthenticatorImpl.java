@@ -12,7 +12,9 @@
 package org.midnightbsd.leonardo.auth;
 
 import io.micronaut.context.annotation.Value;
+import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import org.midnightbsd.leonardo.auth.keys.ApiKeyStore;
 import org.midnightbsd.leonardo.auth.sigv2.SigV2Verifier;
 import org.midnightbsd.leonardo.auth.sigv4.SigV4Verifier;
 import org.slf4j.Logger;
@@ -74,16 +76,32 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
 
     private final SigV4Verifier sigV4Verifier;
     private final SigV2Verifier sigV2Verifier;
+    private final ApiKeyStore keyStore;
     private final boolean allowAnonymousRead;
     private final boolean allowSigV2;
 
     public RequestAuthenticatorImpl(
             final SigV4Verifier sigV4Verifier,
             final SigV2Verifier sigV2Verifier,
+            final boolean allowAnonymousRead,
+            final boolean allowSigV2) {
+        this(sigV4Verifier, sigV2Verifier, null, allowAnonymousRead, allowSigV2);
+    }
+
+    /**
+     * @param keyStore used only to tell an unknown access key apart from a bad
+     *                 signature in {@link #authenticateOrExplain}; may be null
+     */
+    @Inject
+    public RequestAuthenticatorImpl(
+            final SigV4Verifier sigV4Verifier,
+            final SigV2Verifier sigV2Verifier,
+            final ApiKeyStore keyStore,
             @Value("${leonardo.auth.allow_anonymous_read:false}") final boolean allowAnonymousRead,
             @Value("${leonardo.auth.allow_sigv2:true}") final boolean allowSigV2) {
         this.sigV4Verifier = sigV4Verifier;
         this.sigV2Verifier = sigV2Verifier;
+        this.keyStore = keyStore;
         this.allowAnonymousRead = allowAnonymousRead;
         this.allowSigV2 = allowSigV2;
     }
@@ -106,6 +124,15 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
             final Map<String, String> queryParams = parseQueryParams(uri.getRawQuery());
             if (queryParams.containsKey("X-Amz-Signature")) {
                 return authenticatePresigned(method, uri, headers, queryParams)
+                        .map(identity -> new AuthenticationResult(identity, null));
+            }
+            // SigV2 presigned URL (?AWSAccessKeyId=&Expires=&Signature=)
+            if (isSigV2Presigned(queryParams)) {
+                if (!allowSigV2) {
+                    LOG.debug("SigV2 presigned URL rejected: allow_sigv2 is false");
+                    return Optional.empty();
+                }
+                return authenticateSigV2Presigned(method, uri, headers, queryParams)
                         .map(identity -> new AuthenticationResult(identity, null));
             }
             if (allowAnonymousRead && "GET".equalsIgnoreCase(method)) {
@@ -423,6 +450,135 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
             result.putIfAbsent(key, val);
         }
         return result;
+    }
+
+    // -------------------------------------------------------------------------
+    // Failure explanation
+    // -------------------------------------------------------------------------
+
+    @Override
+    public AuthOutcome authenticateOrExplain(
+            final String method, final URI uri, final Map<String, List<String>> headers) {
+        final Optional<AuthenticationResult> ok = authenticateDetailed(method, uri, headers);
+        if (ok.isPresent()) {
+            return new AuthOutcome(ok.get(), null);
+        }
+        return new AuthOutcome(null, explainFailure(method, uri, headers));
+    }
+
+    /**
+     * Classifies a rejected request the way S3 reports it. The request is not
+     * re-verified; only cheap facts (which credential was named, whether a
+     * presigned URL had expired) are inspected.
+     */
+    private AuthFailure explainFailure(
+            final String method, final URI uri, final Map<String, List<String>> headers) {
+        final String auth = firstHeader(headers, "authorization");
+        final Map<String, String> queryParams = parseQueryParams(uri.getRawQuery());
+        String accessKey = null;
+        boolean credentialed = false;
+
+        if (auth != null && !auth.isBlank()) {
+            credentialed = true;
+            final Matcher v4 = SIGV4.matcher(auth);
+            final Matcher v2 = SIGV2.matcher(auth);
+            if (v4.find()) {
+                accessKey = v4.group(1);
+            } else if (v2.find()) {
+                if (!allowSigV2) return AuthFailure.accessDenied();
+                accessKey = v2.group(1);
+            } else {
+                return AuthFailure.accessDenied();   // unknown scheme or malformed header
+            }
+        } else if (queryParams.containsKey("X-Amz-Signature")) {
+            credentialed = true;
+            final String credential = queryParams.get("X-Amz-Credential");
+            accessKey = credential == null ? null : credential.split("/", -1)[0];
+            if (presignedExpired(queryParams.get("X-Amz-Date"), queryParams.get("X-Amz-Expires"))) {
+                return AuthFailure.expired();
+            }
+        } else if (isSigV2Presigned(queryParams)) {
+            credentialed = true;
+            if (!allowSigV2) return AuthFailure.accessDenied();
+            accessKey = queryParams.get("AWSAccessKeyId");
+            if (sigV2PresignedExpired(queryParams.get("Expires"))) {
+                return AuthFailure.expired();
+            }
+        }
+
+        if (!credentialed) {
+            return AuthFailure.accessDenied();        // anonymous request
+        }
+        if (keyStore != null && accessKey != null) {
+            final Optional<ApiKeyStore.ApiKey> key = keyStore.findByAccessKey(accessKey);
+            if (key.isEmpty() || !key.get().enabled()) {
+                return AuthFailure.invalidAccessKeyId();
+            }
+        }
+        return AuthFailure.signatureDoesNotMatch();
+    }
+
+    private static boolean presignedExpired(final String dateParam, final String expiresStr) {
+        if (dateParam == null || expiresStr == null) return false;
+        try {
+            final Instant signingTime = Instant.from(AMZ_DATE_FMT.parse(dateParam));
+            return Instant.now().isAfter(signingTime.plusSeconds(Long.parseLong(expiresStr)));
+        } catch (final DateTimeParseException | NumberFormatException ex) {
+            return false;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // SigV2 presigned URL
+    // -------------------------------------------------------------------------
+
+    private static boolean isSigV2Presigned(final Map<String, String> queryParams) {
+        return queryParams.containsKey("Signature")
+                && queryParams.containsKey("AWSAccessKeyId")
+                && queryParams.containsKey("Expires");
+    }
+
+    private static boolean sigV2PresignedExpired(final String expires) {
+        try {
+            return Instant.now().getEpochSecond() > Long.parseLong(expires);
+        } catch (final NumberFormatException ex) {
+            return true;
+        }
+    }
+
+    /**
+     * Verifies a SigV2 query-string signature. The string to sign is the one
+     * used for header authentication with the {@code Expires} value in place
+     * of the Date line.
+     */
+    private Optional<String> authenticateSigV2Presigned(
+            final String method, final URI uri,
+            final Map<String, List<String>> headers,
+            final Map<String, String> queryParams) {
+        final String accessKey = queryParams.get("AWSAccessKeyId");
+        final String signature = queryParams.get("Signature");
+        final String expires   = queryParams.get("Expires");
+        if (sigV2PresignedExpired(expires)) {
+            LOG.debug("SigV2 presigned URL: expired");
+            return Optional.empty();
+        }
+        final String contentMd5  = Objects.toString(firstHeader(headers, "content-md5"),  "");
+        final String contentType = Objects.toString(firstHeader(headers, "content-type"), "");
+        final String stringToSign = method.toUpperCase(Locale.ROOT) + "\n"
+                + contentMd5  + "\n"
+                + contentType + "\n"
+                + expires     + "\n"
+                + buildCanonicalizedAmzHeaders(headers)
+                + buildCanonicalizedResource(uri);
+        final Optional<String> identity = sigV2Verifier.verify(
+                new SigV2Verifier.SigV2Request(accessKey, signature.trim(), stringToSign));
+        if (identity.isPresent()) {
+            AUDIT.info("SigV2 presigned access: identity={} accessKey={} userAgent={}",
+                    identity.get(), accessKey, firstHeader(headers, "user-agent"));
+        } else {
+            LOG.debug("SigV2 presigned URL: signature verification failed for accessKey={}", accessKey);
+        }
+        return identity;
     }
 
     // -------------------------------------------------------------------------
