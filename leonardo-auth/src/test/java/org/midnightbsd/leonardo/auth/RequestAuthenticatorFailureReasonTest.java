@@ -152,6 +152,31 @@ final class RequestAuthenticatorFailureReasonTest {
     }
 
     @Test
+    void sigV2RejectsEncodedOrRepeatedSignedParameters() throws Exception {
+        final long expires = System.currentTimeMillis() / 1000 + 300;
+        final URI plain = sigV2Presigned(URI.create("http://s3.local/bucket/key"), ACCESS_KEY, SECRET_KEY, expires);
+        // a percent-encoded key decodes to a signed parameter on the server side
+        final URI encodedKey = URI.create(plain + "&response%2Dcontent-type=text/html");
+        assertThat(RequestAuthenticatorImpl.buildCanonicalizedResource(encodedKey))
+                .isEqualTo("/bucket/key?response-content-type=text/html");
+        assertThat(authenticator.authenticate("GET", encodedKey, new HashMap<>())).isEmpty();
+
+        // a repeated signed parameter is ambiguous and never verifies, however it is signed
+        final String resource = "/bucket/key?response-content-type=text/plain";
+        final String sig = SigV2VerifierImpl.hmacSha1Base64(SECRET_KEY, "GET\n\n\n" + expires + "\n" + resource);
+        final URI repeated = URI.create("http://s3.local/bucket/key?response-content-type=text/html"
+                + "&response-content-type=text/plain&AWSAccessKeyId=" + ACCESS_KEY + "&Expires=" + expires
+                + "&Signature=" + URLEncoder.encode(sig, StandardCharsets.UTF_8));
+        assertThat(authenticator.authenticate("GET", repeated, new HashMap<>())).isEmpty();
+        assertThat(RequestAuthenticatorImpl.buildCanonicalizedResource(repeated)).isNull();
+
+        // decoded values are what gets signed, as botocore does it
+        assertThat(RequestAuthenticatorImpl.buildCanonicalizedResource(
+                URI.create("http://s3.local/b/k?response-content-type=text%2Fplain&versionId=v1&x=1")))
+                .isEqualTo("/b/k?response-content-type=text/plain&versionId=v1");
+    }
+
+    @Test
     void expiredSigV2PresignedUrlIsRejected() {
         final URI signed = sigV2Presigned(URI.create("http://s3.local/bucket/key"),
                 ACCESS_KEY, SECRET_KEY, 1_000_000L);

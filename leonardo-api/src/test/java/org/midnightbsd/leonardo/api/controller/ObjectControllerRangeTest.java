@@ -12,6 +12,7 @@
 package org.midnightbsd.leonardo.api.controller;
 
 import io.micronaut.http.HttpRequest;
+import io.micronaut.http.HttpResponse;
 import org.junit.jupiter.api.Test;
 import org.midnightbsd.leonardo.core.object.ObjectMetadata;
 import org.midnightbsd.leonardo.core.object.ObjectService;
@@ -107,6 +108,24 @@ final class ObjectControllerRangeTest {
                 .isEqualTo("folder");
         assertThat(ObjectController.effectiveKey("a/b/", HttpRequest.PUT("/bucket/a/b/", "")))
                 .isEqualTo("a/b/");
+    }
+
+    @Test
+    void anonymousRequestsMayNotUseResponseHeaderOverrides() {
+        final HttpRequest<?> anon = HttpRequest.GET("/bucket/key?response-content-type=text/html");
+        anon.setAttribute("s3.identity", "anonymous");
+        final HttpResponse<?> denied = ObjectController.rejectAnonymousResponseOverrides(anon, "key");
+        assertThat(denied).isNotNull();
+        assertThat(denied.getStatus().getCode()).isEqualTo(400);
+        assertThat(String.valueOf(denied.body())).contains("InvalidRequest");
+
+        final HttpRequest<?> signed = HttpRequest.GET("/bucket/key?response-content-type=text/html");
+        signed.setAttribute("s3.identity", "alice");
+        assertThat(ObjectController.rejectAnonymousResponseOverrides(signed, "key")).isNull();
+
+        final HttpRequest<?> anonPlain = HttpRequest.GET("/bucket/key");
+        anonPlain.setAttribute("s3.identity", "anonymous");
+        assertThat(ObjectController.rejectAnonymousResponseOverrides(anonPlain, "key")).isNull();
     }
 
     @Test

@@ -172,6 +172,10 @@ public final class ObjectController {
         if (request.getParameters().contains("retention")) {
             return handleGetObjectRetention(bucket, key);
         }
+        final HttpResponse<?> anonymousOverride = rejectAnonymousResponseOverrides(request, key);
+        if (anonymousOverride != null) {
+            return anonymousOverride;
+        }
         if (request.getParameters().contains("torrent")) {
             return BucketController.s3Error(S3Xml.error("NotImplemented",
                     "GetObjectTorrent is not supported by this server.", null), 501);
@@ -1027,6 +1031,28 @@ public final class ObjectController {
             {"response-content-disposition", "Content-Disposition"},
             {"response-content-encoding", "Content-Encoding"},
     };
+
+    /**
+     * S3 refuses {@code response-*} overrides on anonymous requests, so a public
+     * link cannot be given arbitrary Content-Type or Content-Disposition by
+     * whoever shares it. Signed requests (headers or presigned) may use them
+     * because the parameters are covered by the signature.
+     *
+     * @return the 400 response to send, or null when the request is fine
+     */
+    static HttpResponse<?> rejectAnonymousResponseOverrides(final HttpRequest<?> request, final String key) {
+        final Object identity = request.getAttribute("s3.identity").orElse(null);
+        if (identity != null && !"anonymous".equals(identity)) {
+            return null;
+        }
+        for (final String[] mapping : RESPONSE_OVERRIDES) {
+            if (request.getParameters().contains(mapping[0])) {
+                return BucketController.s3Error(S3Xml.error("InvalidRequest",
+                        "Request specific response headers cannot be used for anonymous GET requests.", key), 400);
+            }
+        }
+        return null;
+    }
 
     /**
      * Applies the {@code response-*} query parameters of GetObject, which let a

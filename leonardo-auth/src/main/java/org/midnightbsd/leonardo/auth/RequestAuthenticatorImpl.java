@@ -21,6 +21,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.URI;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -571,6 +572,11 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
             LOG.debug("SigV2 presigned URL: expired");
             return Optional.empty();
         }
+        final String resource = buildCanonicalizedResource(uri);
+        if (resource == null) {
+            LOG.debug("SigV2 presigned URL: ambiguous or malformed signed query parameters");
+            return Optional.empty();
+        }
         final String contentMd5  = Objects.toString(firstHeader(headers, "content-md5"),  "");
         final String contentType = Objects.toString(firstHeader(headers, "content-type"), "");
         final String stringToSign = method.toUpperCase(Locale.ROOT) + "\n"
@@ -578,7 +584,7 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
                 + contentType + "\n"
                 + expires     + "\n"
                 + buildCanonicalizedAmzHeaders(headers)
-                + buildCanonicalizedResource(uri);
+                + resource;
         final Optional<String> identity = sigV2Verifier.verify(
                 new SigV2Verifier.SigV2Request(accessKey, signature.trim(), stringToSign));
         if (identity.isPresent()) {
@@ -607,6 +613,10 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
         final String signature = m.group(2).trim();
 
         final String stringToSign = buildSigV2StringToSign(method, uri, headers);
+        if (stringToSign == null) {
+            LOG.debug("SigV2: ambiguous or malformed signed query parameters");
+            return Optional.empty();
+        }
         final SigV2Verifier.SigV2Request req =
                 new SigV2Verifier.SigV2Request(accessKey, signature, stringToSign);
 
@@ -630,6 +640,7 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
 
         final String amzHeaders  = buildCanonicalizedAmzHeaders(headers);
         final String resource    = buildCanonicalizedResource(uri);
+        if (resource == null) return null;
 
         return method.toUpperCase(Locale.ROOT) + "\n"
                 + contentMd5  + "\n"
@@ -651,20 +662,39 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
         return sb.toString();
     }
 
-    private static String buildCanonicalizedResource(final URI uri) {
+    /**
+     * The SigV2 CanonicalizedResource: the raw path plus the signed query
+     * parameters, sorted. Keys and values are percent-decoded before matching
+     * and signing, which is how the SDKs build it and, more importantly, how
+     * the server later reads them: matching raw keys would let a request smuggle
+     * {@code response%2Dcontent-type} past the signature. A signed parameter
+     * given more than once is ambiguous (signer and consumer could pick
+     * different copies), so the request is rejected by returning null.
+     *
+     * @return the resource, or null when the query cannot be canonicalized safely
+     */
+    static String buildCanonicalizedResource(final URI uri) {
         // /<path>
         final String path = uri.getRawPath() == null ? "/" : uri.getRawPath();
         final StringBuilder sb = new StringBuilder(path);
 
-        // Append signed sub-resources, sorted alphabetically
         final String rawQuery = uri.getRawQuery();
         if (rawQuery != null && !rawQuery.isEmpty()) {
             final Map<String, String> subResources = new TreeMap<>();
             for (final String pair : rawQuery.split("&", -1)) {
                 final int eq = pair.indexOf('=');
-                final String key = eq < 0 ? pair : pair.substring(0, eq);
-                final String val = eq < 0 ? null : pair.substring(eq + 1);
+                final String key;
+                final String val;
+                try {
+                    key = URLDecoder.decode(eq < 0 ? pair : pair.substring(0, eq), StandardCharsets.UTF_8);
+                    val = eq < 0 ? null : URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
+                } catch (final IllegalArgumentException malformed) {
+                    return null;
+                }
                 if (SIGV2_SUB_RESOURCES.contains(key)) {
+                    if (subResources.containsKey(key)) {
+                        return null;
+                    }
                     subResources.put(key, val);
                 }
             }
