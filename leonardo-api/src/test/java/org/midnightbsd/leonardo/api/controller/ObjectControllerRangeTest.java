@@ -11,6 +11,8 @@
  */
 package org.midnightbsd.leonardo.api.controller;
 
+import io.micronaut.http.HttpRequest;
+import io.micronaut.http.HttpResponse;
 import org.junit.jupiter.api.Test;
 import org.midnightbsd.leonardo.core.object.ObjectMetadata;
 import org.midnightbsd.leonardo.core.object.ObjectService;
@@ -92,7 +94,65 @@ final class ObjectControllerRangeTest {
         when(service.headObject("bucket", "key")).thenReturn(meta);
         final ObjectController controller = new ObjectController(service, mock(MultipartService.class));
 
-        assertThat(controller.headObject("bucket", "key", "", "\"etag\"", "", "", "")
-                .getStatus().getCode()).isEqualTo(304);
+        assertThat(controller.headObject("bucket", "key", "", "\"etag\"", "", "", "",
+                HttpRequest.HEAD("/bucket/key")).getStatus().getCode()).isEqualTo(304);
+    }
+
+    @Test
+    void effectiveKeyRestoresTrailingSlashDroppedByRouting() {
+        // Micronaut's /{bucket}/{+key} route hands "folder" to the controller for
+        // both /bucket/folder and /bucket/folder/; the raw path tells them apart.
+        assertThat(ObjectController.effectiveKey("folder", HttpRequest.PUT("/bucket/folder/", "")))
+                .isEqualTo("folder/");
+        assertThat(ObjectController.effectiveKey("folder", HttpRequest.PUT("/bucket/folder", "")))
+                .isEqualTo("folder");
+        assertThat(ObjectController.effectiveKey("a/b/", HttpRequest.PUT("/bucket/a/b/", "")))
+                .isEqualTo("a/b/");
+    }
+
+    @Test
+    void anonymousRequestsMayNotUseResponseHeaderOverrides() {
+        final HttpRequest<?> anon = HttpRequest.GET("/bucket/key?response-content-type=text/html");
+        anon.setAttribute("s3.identity", "anonymous");
+        final HttpResponse<?> denied = ObjectController.rejectAnonymousResponseOverrides(anon, "key");
+        assertThat(denied).isNotNull();
+        assertThat(denied.getStatus().getCode()).isEqualTo(400);
+        assertThat(String.valueOf(denied.body())).contains("InvalidRequest");
+
+        final HttpRequest<?> signed = HttpRequest.GET("/bucket/key?response-content-type=text/html");
+        signed.setAttribute("s3.identity", "alice");
+        assertThat(ObjectController.rejectAnonymousResponseOverrides(signed, "key")).isNull();
+
+        final HttpRequest<?> anonPlain = HttpRequest.GET("/bucket/key");
+        anonPlain.setAttribute("s3.identity", "anonymous");
+        assertThat(ObjectController.rejectAnonymousResponseOverrides(anonPlain, "key")).isNull();
+    }
+
+    @Test
+    void headerSafeDropsLineBreaksOnly() {
+        assertThat(ObjectController.headerSafe("attachment; filename=\"a.txt\"\r\nX-Injected: 1"))
+                .isEqualTo("attachment; filename=\"a.txt\"X-Injected: 1");
+        assertThat(ObjectController.headerSafe("plain")).isEqualTo("plain");
+        assertThat(ObjectController.headerSafe(null)).isNull();
+    }
+
+    @Test
+    void parsesCopySourceWithOptionalVersionId() {
+        ObjectController.CopySource src = ObjectController.parseCopySource("/src-bucket/dir/file%20name.txt");
+        assertThat(src.bucket()).isEqualTo("src-bucket");
+        assertThat(src.key()).isEqualTo("dir/file name.txt");
+        assertThat(src.versionId()).isNull();
+
+        src = ObjectController.parseCopySource("src-bucket/key?versionId=01HXYZ");
+        assertThat(src.bucket()).isEqualTo("src-bucket");
+        assertThat(src.key()).isEqualTo("key");
+        assertThat(src.versionId()).isEqualTo("01HXYZ");
+    }
+
+    @Test
+    void parsesCopySourceRange() {
+        assertThat(ObjectController.parseCopySourceRange("bytes=0-99")).containsExactly(0L, 99L);
+        assertThat(ObjectController.parseCopySourceRange(null)).isNull();
+        assertThat(ObjectController.parseCopySourceRange("")).isNull();
     }
 }

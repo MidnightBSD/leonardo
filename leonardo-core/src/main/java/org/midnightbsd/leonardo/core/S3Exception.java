@@ -59,6 +59,12 @@ public final class S3Exception extends RuntimeException {
                 "The specified key does not exist: " + key, 404);
     }
 
+    /** 404 NoSuchVersion: the key exists but has no version with that id. */
+    public static S3Exception noSuchVersion(final String key, final String versionId) {
+        return new S3Exception("NoSuchVersion",
+                "The specified version does not exist: " + key + " (" + versionId + ")", 404);
+    }
+
     public static S3Exception bucketAlreadyExists(final String bucket) {
         return new S3Exception(BUCKET_ALREADY_EXISTS,
                 "Your previous request to create the named bucket succeeded and you already own it: "

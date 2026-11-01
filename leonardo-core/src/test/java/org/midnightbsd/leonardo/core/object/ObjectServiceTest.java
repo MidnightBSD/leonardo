@@ -30,9 +30,9 @@ final class ObjectServiceTest {
         new BucketService(bucketStore, layout, "us-east-1")
                 .createBucket("bucket", "owner", null, true);
         final ObjectMetadataStore metaStore = new ObjectMetadataStore(layout, writer);
+        final ObjectPayloadStore payloadStore = new ObjectPayloadStore(layout, writer);
         final ObjectService service = new ObjectService(
-                metaStore, bucketStore, new ObjectPayloadStore(layout, writer),
-                new ObjectPublisher(metaStore, bucketStore));
+                metaStore, bucketStore, payloadStore, new ObjectPublisher(metaStore, bucketStore, payloadStore));
 
         final ObjectService.DeleteObjectResult result = service.deleteObject("bucket", "missing", false);
 

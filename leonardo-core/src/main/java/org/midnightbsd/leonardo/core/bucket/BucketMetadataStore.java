@@ -107,10 +107,14 @@ public final class BucketMetadataStore {
      * Returns {@code true} if the bucket's data directory contains no objects.
      * Does NOT lock — caller must hold the bucket write lock.
      */
+    /**
+     * A bucket is empty when it holds no object records. Object metadata is the
+     * source of truth: a payload file without a record is unreachable garbage
+     * (left by a crash between writing the payload and its metadata) and must
+     * not make a bucket undeletable, so the data directory is not consulted.
+     */
     public boolean isEmpty(final String bucket) throws IOException {
-        final Path dataDir = layout.bucketDataDir(bucket);
-        final Path objectsDir = layout.bucketObjectsMetaDir(bucket);
-        return isEmptyDir(dataDir) && isEmptyDir(objectsDir);
+        return isEmptyDir(layout.bucketObjectsMetaDir(bucket));
     }
 
     private static boolean isEmptyDir(final Path dir) throws IOException {
