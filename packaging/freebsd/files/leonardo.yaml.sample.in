@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 #
 # Sample Leonardo server configuration.
-# Copy to /etc/leonardo/leonardo.yaml and adjust for your deployment.
+# Copy to %%PREFIX%%/etc/leonardo/leonardo.yaml and adjust for your deployment.
 # See docs/project-plan.md §4 for the full schema.
 
 leonardo:
