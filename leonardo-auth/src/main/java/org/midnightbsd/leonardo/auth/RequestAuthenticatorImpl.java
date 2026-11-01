@@ -68,11 +68,20 @@ public final class RequestAuthenticatorImpl implements RequestAuthenticator {
             DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
 
     // S3 sub-resources that are included in the SigV2 CanonicalizedResource
+    /**
+     * Query parameters that take part in the SigV2 CanonicalizedResource: the
+     * sub-resources plus the GetObject {@code response-*} overrides. Leaving the
+     * overrides out would let anyone rewrite the Content-Type or
+     * Content-Disposition of a shared presigned link without breaking its
+     * signature.
+     */
     private static final Set<String> SIGV2_SUB_RESOURCES = Set.of(
             "acl", "cors", "delete", "lifecycle", "location", "logging",
             "notification", "partNumber", "policy", "requestPayment", "restore",
             "tagging", "torrent", "uploadId", "uploads", "versionId",
-            "versioning", "versions", "website");
+            "versioning", "versions", "website",
+            "response-content-type", "response-content-language", "response-expires",
+            "response-cache-control", "response-content-disposition", "response-content-encoding");
 
     private final SigV4Verifier sigV4Verifier;
     private final SigV2Verifier sigV2Verifier;

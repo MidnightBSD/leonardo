@@ -727,7 +727,7 @@ public final class ObjectController {
                 final boolean wasMarker = objectService.deleteObjectVersion(bucket, key, versionId, bypass);
                 final MutableHttpResponse<String> resp =
                         HttpResponse.<String>status(HttpStatus.NO_CONTENT)
-                                .header("x-amz-version-id", versionId);
+                                .header("x-amz-version-id", headerSafe(versionId));
                 if (wasMarker) {
                     resp.header("x-amz-delete-marker", "true");
                 }
@@ -1038,13 +1038,23 @@ public final class ObjectController {
             final String value = request.getParameters().getFirst(mapping[0]).orElse(null);
             if (value == null || value.isEmpty()) continue;
             if ("Content-Type".equals(mapping[1])) {
-                response.contentType(value);
+                response.contentType(headerSafe(value));
             } else {
                 // header() appends; the override must replace the stored value
                 response.getHeaders().remove(mapping[1]);
-                response.header(mapping[1], value);
+                response.header(mapping[1], headerSafe(value));
             }
         }
+    }
+
+    /**
+     * Makes a request-supplied string safe to echo as a response header: a
+     * carriage return or line feed would otherwise let a client split the
+     * response. Netty rejects such values anyway, but with a 500 rather than
+     * a clean header.
+     */
+    static String headerSafe(final String value) {
+        return value == null ? null : value.replaceAll("[\\r\\n]", "");
     }
 
     /** Returns true if {@code responseEtag} equals any of the ETags in the header value. */

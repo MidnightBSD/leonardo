@@ -143,7 +143,8 @@ def _short(value, limit: int = 200) -> str:
 
 
 def md5(b: bytes) -> str:
-    return hashlib.md5(b).hexdigest()
+    """S3 ETags are MD5 digests; this is an integrity check, not a security use."""
+    return hashlib.md5(b, usedforsecurity=False).hexdigest()
 
 
 def body(r) -> bytes:

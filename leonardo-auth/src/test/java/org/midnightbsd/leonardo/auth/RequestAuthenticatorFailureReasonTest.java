@@ -134,6 +134,24 @@ final class RequestAuthenticatorFailureReasonTest {
     }
 
     @Test
+    void sigV2SignatureCoversResponseHeaderOverrides() throws Exception {
+        // response-content-disposition is part of the CanonicalizedResource, so a
+        // link signed without it must not accept one added afterwards, and a link
+        // signed with it must verify.
+        final long expires = System.currentTimeMillis() / 1000 + 300;
+        final URI plain = sigV2Presigned(URI.create("http://s3.local/bucket/key"), ACCESS_KEY, SECRET_KEY, expires);
+        final URI tampered = URI.create(plain + "&response-content-disposition=attachment");
+        assertThat(authenticator.authenticate("GET", tampered, new HashMap<>())).isEmpty();
+
+        final String resource = "/bucket/key?response-content-disposition=attachment";
+        final String sig = SigV2VerifierImpl.hmacSha1Base64(SECRET_KEY, "GET\n\n\n" + expires + "\n" + resource);
+        final URI signedWithOverride = URI.create("http://s3.local/bucket/key?response-content-disposition=attachment"
+                + "&AWSAccessKeyId=" + ACCESS_KEY + "&Expires=" + expires
+                + "&Signature=" + URLEncoder.encode(sig, StandardCharsets.UTF_8));
+        assertThat(authenticator.authenticate("GET", signedWithOverride, new HashMap<>())).contains(IDENTITY);
+    }
+
+    @Test
     void expiredSigV2PresignedUrlIsRejected() {
         final URI signed = sigV2Presigned(URI.create("http://s3.local/bucket/key"),
                 ACCESS_KEY, SECRET_KEY, 1_000_000L);
