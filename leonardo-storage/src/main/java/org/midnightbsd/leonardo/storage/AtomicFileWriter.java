@@ -74,7 +74,12 @@ public final class AtomicFileWriter {
                     StandardOpenOption.WRITE);
                  OutputStream out = java.nio.channels.Channels.newOutputStream(ch)) {
 
-                writer.accept(out);
+                // Callers such as Jackson's ObjectMapper.writeValue(OutputStream)
+                // close the stream they are handed, which would close the channel
+                // underneath us and make the fsync below throw
+                // ClosedChannelException. Hand out a shield whose close() only
+                // flushes, so the channel stays open until this block ends.
+                writer.accept(new CloseShieldOutputStream(out));
                 out.flush();
                 if (fsyncOnWrite) {
                     ch.force(true);   // fsync the data + metadata
@@ -105,6 +110,23 @@ public final class AtomicFileWriter {
                 // swallow — we're already in the error path
             }
             throw ex;
+        }
+    }
+
+    /** Forwards writes to the delegate but turns {@code close()} into a flush. */
+    private static final class CloseShieldOutputStream extends java.io.FilterOutputStream {
+        CloseShieldOutputStream(final OutputStream delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public void write(final byte[] b, final int off, final int len) throws IOException {
+            out.write(b, off, len);
+        }
+
+        @Override
+        public void close() throws IOException {
+            out.flush();
         }
     }
 

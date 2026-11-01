@@ -24,7 +24,7 @@ final class ObjectMetadataStoreTest {
     @Test
     void resumesVersionListingWithinTheSameKey() throws Exception {
         final ObjectMetadataStore store = new ObjectMetadataStore(
-                new StorageLayout(tempDir), new AtomicFileWriter(false));
+                new StorageLayout(tempDir), new AtomicFileWriter(true));
         final Instant now = Instant.parse("2026-08-19T00:00:00Z");
         store.write("bucket", new ObjectMetadata(
                 "key", "current", 1, "text/plain", "current-etag", now, now, "STANDARD",
